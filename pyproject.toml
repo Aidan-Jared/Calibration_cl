@@ -1,0 +1,21 @@
+[project]
+name = "calibration"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "equinox>=0.13.7",
+    "jax[cuda13]>=0.10.0",
+    "optax>=0.2.8",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "tqdm>=4.66.5",
+]
+
+[tool.uv.sources]
+torch = { index = "torchvision-cpu" }
+
+[[tool.uv.index]]
+name = "torchvision-cpu"
+url = "https://download.pytorch.org/whl/cpu"

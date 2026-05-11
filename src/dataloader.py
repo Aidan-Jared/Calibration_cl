@@ -84,7 +84,7 @@ class CL_DataLoader:
         if self.buffer:
             self.buffer_logits = jnp.zeros((self.buffer_size, self.num_classes + 1), device=device)
             self.buffer_idx = jnp.zeros((self.buffer_size,), device=device)
-            self.buffer_targets = jnp.zeros((self.buffer_size, self.num_classes), device=device)
+            self.buffer_targets = jnp.zeros((self.buffer_size,), device=device)
 
     @staticmethod
     @jax.jit
@@ -193,24 +193,28 @@ class CL_DataLoader:
         model = eqx.nn.inference_mode(model, True)
         key, subkey = jax.random.split(key)
         if selection_method is None:
-            task_idx = self.tasks[:task_n]
-            slots_per_task = self.buffer_size // task_n
+            task_idx = self.tasks[:task_n + 1]
+            slots_per_task = self.buffer_size // task_idx.size
             start = 0
             end = slots_per_task
-            for task in task_idx:
-                labels = np.repeat(task_idx, self.class_lengths[task])
+            for c in task_idx.squeeze(0):
+                labels = np.repeat(c, slots_per_task)
                 key, subkey = jax.random.split(key)
-                tidx = jax.random.choice(subkey, self.class_indicies[task], shape = (slots_per_task,))
+                tidx = jax.random.choice(subkey, self.class_indicies[c], shape = (slots_per_task,))
                 self.buffer_idx = self.buffer_idx.at[start:end].set(tidx)
-                self.buffer_targets = self.buffer_targets.at[start:end].set(labels[task, tidx])
-                X = self.all_data[tidx[start:end]]
+                self.buffer_targets = self.buffer_targets.at[start:end].set(labels)
+                X = self.all_data[tidx]
                 if hasattr(self, "mean") and hasattr(self, "std"):
                     X = self._norm(X, self.mean, self.std)
                 X = jax.device_put(
                     X,
                     jax.devices(self.iter_device)[0]
                 )
-                logits, _ = jax.vmap(model_forward, in_axes = (None, 0, None, None))(model, X, state, key)
+                logits, _ = jax.vmap(model_forward,
+                    in_axes = (None, 0, None, None),
+                    out_axes = (0, None),
+                    axis_name = "batch",
+                )(model, X, state, key)
                 logits = jax.device_put(
                     logits,
                     jax.devices(self.device)[0]

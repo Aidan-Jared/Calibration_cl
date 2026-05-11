@@ -4,7 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
-from src.resnet18 import Drop_Path
+from src.models.resnet18 import Drop_Path
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -221,13 +221,13 @@ class singleHeadResNet32(eqx.Module):
     ):
         subkey1, subkey2 = jax.random.split(key)
         self.resnet = ResNet32(input_channels, hidden_channels, num_classes, dropout, dtype, key=subkey1)
-        self.fc = eqx.nn.Linear(hidden_channels * 4, num_classes, dtype=dtype, key=subkey2)
+        self.fc = eqx.nn.Linear(hidden_channels * 4, num_classes + 1, dtype=dtype, key=subkey2)
         
     def __call__(
         self,
         x: Float[Array, "batch c w h"],
         state: PyTree,
-        task: int, # not used but here for compatibility
+        # task: int, # not used but here for compatibility
         *,
         key: PRNGKeyArray,
     ):

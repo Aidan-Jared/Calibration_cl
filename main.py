@@ -8,6 +8,7 @@ from src.der import train_der
 from src.dataloader import CL_DataLoader
 from src.models.resnet32 import singleHeadResNet32
 from src.models.resnet18 import singleHeadResNet18
+from src.models.vit import VisionTransformer
 
 from src.utils import load_data
 
@@ -57,6 +58,7 @@ args = vars(parser.parse_args())
 model_dict = {
     "singleHeadResNet32": singleHeadResNet32,
     "singleHeadResNet18": singleHeadResNet18,
+    "VisionTransformer": VisionTransformer,
 }
 
 

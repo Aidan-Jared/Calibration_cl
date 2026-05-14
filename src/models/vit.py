@@ -276,7 +276,6 @@ class VisionTransformer(eqx.Module):
             lambda: (None, None),
             key
         )
-        B = x.shape[0]
         x = self.patch_embed(x)
 
         x = jnp.concat((self.cls_token, x), axis=1)

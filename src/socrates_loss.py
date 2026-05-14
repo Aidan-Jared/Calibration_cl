@@ -8,17 +8,17 @@ def adaptive_target(
     target,
     updated: Array,
     alpha: float,   
-) -> tuple[Array, Array, Array]:
+) -> tuple[Array, Array]:
     oh_target = jnp.zeros_like(prob_history).at[target].set(1)
     
     p_momentum = jnp.where(updated == 1, prob_history, oh_target)
     
     p_momentum = alpha * p_momentum + (1 - alpha) * prob
-    updated = jnp.array(1)
+    # updated = jnp.array(1)
     
     prob_history = p_momentum
     
-    return p_momentum, updated, prob_history    
+    return p_momentum, prob_history    
 
 def socrates_loss(
     logits: Array,
@@ -32,7 +32,7 @@ def socrates_loss(
         jax.lax.stop_gradient(logits)
     )
     
-    t, updated, prob_history = adaptive_target(
+    t, prob_history = adaptive_target(
         probs[:-1], prob_history,target, updated, alpha
     )
     
@@ -41,7 +41,7 @@ def socrates_loss(
     
     socrates = jnp.sum(jnp.power(1 - probs[:-1], gamma) * adaptive_component)
     
-    return -socrates / (probs.shape[-1] - 1), updated, prob_history
+    return -socrates / (probs.shape[-1] - 1), prob_history
 
 if __name__ == "__main__":
     key = jax.random.PRNGKey(42)

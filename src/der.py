@@ -1,3 +1,4 @@
+from sympy.core.benchmarks.bench_expand import p
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree, PRNGKeyArray
@@ -10,12 +11,8 @@ from equinox.nn._stateful import State
 from optax import softmax_cross_entropy_with_integer_labels, GradientTransformationExtraArgs
 
 from src.socrates_loss import socrates_loss
-
-def model_forward(
-    model, x: Array, state: State, *, key: PRNGKeyArray
-):
-    logits, state = model(x, state, key=key)
-    return logits, state
+from src.dataloader import CL_DataLoader
+from src.util import model_forward, eval
 
 
 def der_loss(
@@ -24,14 +21,14 @@ def der_loss(
     y: Array,
     state: State,
     old_logits: Array,
-    buffer_size: int,
-    alpha_: float = .5,
+    batch_size: int,
+    der_alpha: float = .5,
     beta: float = 0.0,
     prob_history: Array | None = None,
     indexes: Array | None = None,
     updated: Array | None = None,
     gamma: float | None = None,
-    alpha: float | None = None,
+    soc_alpha: float | None = None,
     *,
     key: PRNGKeyArray,
 ):
@@ -39,29 +36,61 @@ def der_loss(
     keys = jnp.array(keys)
     
     logits, state = jax.vmap(
-        model_forward, in_axes = (None, 0, None, 0), out_axes = (0, None)
-    )(Model, x, state, key=keys)
+        model_forward, in_axes=(None, 0, None, 0),
+        out_axes=(0, None), axis_name = "batch",
+    )(Model, x, state, keys)
+
+   
+    acc = jnp.mean(jnp.argmax(logits, axis = 1) == y)
     
-    acc = jnp.mean(jnp.argmax(logits) == y)
-    
-    if prob_history is None or updated is None or alpha is None or gamma is None or indexes is None:
-        loss = softmax_cross_entropy_with_integer_labels(logits[:-buffer_size], y[:-buffer_size])
-        loss += alpha_ * jnp.mean((logits[-buffer_size:] - old_logits)**2)
+    if prob_history is None or updated is None or soc_alpha is None or gamma is None or indexes is None:
+        loss = softmax_cross_entropy_with_integer_labels(logits[:batch_size], y[:batch_size])
+        sloss = jax.lax.cond(
+            jnp.all(old_logits) != 0.0,
+            lambda: der_alpha * jnp.mean((logits[batch_size:] - old_logits)**2),
+            lambda: 0.0,
+        )
+        loss += sloss
         if beta != 0.0:
-            loss += beta * softmax_cross_entropy_with_integer_labels(logits[-buffer_size:], y[-buffer_size:])
-        return loss, (acc, state, None, None)
+            sloss = jax.lax.cond(
+                jnp.all(old_logits) != 0.0,
+                lambda: beta * jnp.mean(softmax_cross_entropy_with_integer_labels(logits[batch_size:], y[batch_size:])),
+                lambda: 0.0,
+            )
+            loss += sloss
+        return jnp.mean(loss), (acc, state, None, None)
     else:
-        loss, updated, up_prob_history = jax.vmap(
+        loss, up_prob_history = jax.vmap(
             socrates_loss, in_axes = (0, 0, 0, 0, None, None)
-        )(logits[:-buffer_size], prob_history[indexes[:-buffer_size]], y, updated, gamma, alpha)
-        loss += jnp.mean((logits[-buffer_size:] - old_logits)**2)
-        prob_history = prob_history.at[indexes[:-buffer_size]].set(up_prob_history)
+        )(logits[:batch_size], prob_history[indexes[:batch_size]], y[:batch_size], updated[indexes[:batch_size]], gamma, soc_alpha)
+        loss = jnp.mean(loss)
+        sloss = jax.lax.cond(
+            jnp.all(old_logits) != 0.0,
+            lambda: der_alpha * jnp.mean((logits[batch_size:] - old_logits)**2),
+            lambda: 0.0,
+        )
+        loss += sloss
+        prob_history = prob_history.at[indexes[:batch_size]].set(up_prob_history)
+        updated = updated.at[indexes[:batch_size]].set(1)
         if beta != 0:
-            loss, updated, up_prob_history = beta * jax.vmap(
-                socrates_loss, in_axes = (0, 0, 0, 0, None, None)
-            )(logits[-buffer_size:], prob_history[indexes[-buffer_size:]], y, updated, gamma, alpha)
+
+            def socrates_loss_with_old_logits(logits, prob_history, y, updated, gamma, soc_alpha):
+                sloss, up_prob_history = jax.vmap(
+                    socrates_loss, in_axes = (0, 0, 0, 0, None, None)
+                )(logits[batch_size:], prob_history[indexes[batch_size:]], y[batch_size:], updated[indexes[batch_size:]], gamma, soc_alpha)
+                prob_history = prob_history.at[indexes[batch_size:]].set(up_prob_history)
+                updated = updated.at[indexes[batch_size:]].set(1)
+                return jnp.mean(sloss), prob_history, updated
+                
+            sloss, prob_history, updated= jax.lax.cond(
+                jnp.all(old_logits) != 0.0,
+                lambda: socrates_loss_with_old_logits(
+                    logits, prob_history, y,
+                    updated, gamma, soc_alpha),
+                lambda: (jnp.array(0.0), prob_history, updated),
+            )
+            loss = loss + beta * sloss
         
-            prob_history = prob_history.at[indexes[-buffer_size:]].set(up_prob_history)
         return loss, (acc, state, updated, prob_history)
         
 def train_step(
@@ -70,47 +99,48 @@ def train_step(
     y: Array,
     state: State,
     old_logits: Array,
-    buffer_size: int,
+    batch_size: int,
     optim:GradientTransformationExtraArgs,
     opt_state: PyTree,
+    der_alpha: float = 0.5,
     beta: float = 0.0,
     prob_history: Array | None = None,
     indexes: Array | None = None,
     updated: Array | None = None,
     gamma: float | None = None,
-    alpha: float | None = None,
+    soc_alpha: float | None = None,
     *,
     key: PRNGKeyArray,
 ):
-    (loss, acc, state, updated, prob_history), grads = eqx.filter_value_and_grad(der_loss, has_aux = True)(
-        model, x, y, state, old_logits, buffer_size, beta,
-        prob_history, indexes, updated, gamma, alpha, key = key
-    )
-    
-    updates = optim.update(grads, opt_state, eqx.filter(model, eqx.is_array))
+    (loss, (acc, state, updated, prob_history)), grads = eqx.filter_value_and_grad(der_loss, has_aux = True)(
+        model, x, y, state, old_logits, batch_size, der_alpha, beta,
+        prob_history, indexes, updated, gamma, soc_alpha, key = key
+    )    
+    updates, opt_state = optim.update(grads, opt_state, eqx.filter(model, eqx.is_array))
     
     model = eqx.apply_updates(model, updates)
     
     return model, loss, acc, state, updated, prob_history
     
-def train(
+def train_der(
     model,
-    trainloader,
-    testloader,
+    trainloader: CL_DataLoader,
+    testloader: CL_DataLoader,
     tasks: int,
     epochs: int,
     state: State,
-    buffer_size: int,
     optim:GradientTransformationExtraArgs,
+    der_alpha: float = 0.5,
     beta: float = 0.0,
     prob_history: Array | None = None,
     updated: Array | None = None,
     gamma: float | None = None,
-    alpha: float | None = None,
+    soc_alpha: float | None = None,
     print_every: int = 10,
     *,
     key: PRNGKeyArray,    
 ):
+    batch_size = trainloader.batch_size
     for task in range(tasks):
         opt_state = optim.init(eqx.filter(model, eqx.is_array))
         for epoch in range(epochs):
@@ -122,16 +152,18 @@ def train(
             pbar = tqdm(
                 enumerate(trainloader.sample(task, key=subkey)),
                 total=trainloader.iters(task),
-                # ncols=75,
             )
             train_step_jit = eqx.filter_jit(train_step)
-            for step, (x,y, indexes, old_logits) in pbar:
+            # train_step_jit = train_step
+            for step, (x,y, indexes, task_n, old_logits) in pbar:
                 key, subkey = jax.random.split(key)
                 model, loss, acc, state, updated, prob_history = train_step_jit(
-                    model, x, y, state, buffer_size, optim, opt_state, beta,
-                    prob_history, indexes,updated, gamma, alpha, key = subkey
+                    model, x, y, state, old_logits, batch_size, optim, opt_state, der_alpha, beta,
+                    prob_history, indexes,updated, gamma, soc_alpha, key = subkey
                 )
-                if step % print_every == 0:
+                epoch_loss.append(loss)
+                epoch_acc.append(acc)
+                if (step + 1) % print_every == 0:
                     pbar.set_postfix(
                         {
                             "task_train": task,
@@ -141,3 +173,15 @@ def train(
                             "acc": np.mean(epoch_acc),
                         }
                     )
+                    
+        # _ = eval(
+        #     model, state, tasks, testloader, key=subkey
+        # )
+        
+        trainloader.add_to_buffer(
+            task,
+            model,
+            state,
+            selection_method=None,
+            key=subkey,
+        )

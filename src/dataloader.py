@@ -9,7 +9,7 @@ from typing import Callable
 from concurrent.futures import ThreadPoolExecutor
 from src.models.resnet18 import ResNet18
 from src.models.resnet32 import ResNet32
-from src.util import model_forward
+from src.utils import model_forward
 
 
 class CL_DataLoader:
@@ -64,7 +64,7 @@ class CL_DataLoader:
         max_samples_per_class = max(len(v) for v in class_to_indices.values())
 
         self.class_indicies = jax.device_put(
-            jnp.full((self.num_classes, max_samples_per_class), -1, dtype=jnp.uint32),
+            jnp.full((self.num_classes, max_samples_per_class), -1, dtype=jnp.int32),
             device,
         )
 
@@ -83,7 +83,7 @@ class CL_DataLoader:
         self.tasks = np.arange(self.num_classes).reshape((self.splits, -1))
         if self.buffer:
             self.buffer_logits = jnp.zeros((self.buffer_size, self.num_classes + 1), device=device, dtype=jnp.float32)
-            self.buffer_idx = jnp.zeros((self.buffer_size,), device=device, dtype = jnp.uint32)
+            self.buffer_idx = jnp.full((self.buffer_size,), -1, device=device, dtype=jnp.int32)
             self.buffer_targets = jnp.zeros((self.buffer_size,), device=device, dtype=jnp.uint32)
 
     @staticmethod
@@ -113,7 +113,7 @@ class CL_DataLoader:
         self.batch_size = new_batch_size
 
     def _prepare_batch(self, X, y, class_idx, task, device, *, key):
-        X = jax.jit(lambda x: x / 255.0)(X)
+        X = jax.jit(lambda x: x / 255.0)(X.astype(jnp.float32))
         if hasattr(self, "mean") and hasattr(self, "std"):
             X = self._norm(X, self.mean, self.std)
         X = jax.device_put(X, device)
@@ -141,7 +141,7 @@ class CL_DataLoader:
 
         if self.buffer and (task_n > 0 or jnp.any(self.buffer_idx > 0)):
             n_buff = self.buffer_idx.shape[0] // batches
-            filled = int(jnp.sum(self.buffer_idx > 0))
+            filled = int(jnp.sum(self.buffer_idx >= 0))
             key, subkey = jax.random.split(key)
             idx = jax.random.choice(subkey, filled, shape=(n_buff * batches,)).reshape(batches, n_buff)
 
@@ -171,12 +171,6 @@ class CL_DataLoader:
             for X, y, class_idx_i, task_n_i in self._prefetch(raw_generator(), device, key=key):
                 class_idx_i = jax.device_put(class_idx_i, device)
                 yield (X, y, class_idx_i, task_n_i, jnp.zeros((1,)))
-
-        # for i, (X, y, class_idx_i, task_n_i) in enumerate(self._prefetch(raw_generator(), device, key=key)):
-        #     if logits is not None:
-        #         yield (X, y, class_idx_i, task_n_i, logits[i])
-        #     else:
-        #         yield (X, y, class_idx_i, task_n_i, None)
 
     def _prefetch(self, generator, device, *, key):
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
@@ -218,7 +212,8 @@ class CL_DataLoader:
                 self.buffer_targets = self.buffer_targets.at[start:end].set(labels)
                 X = self.all_data[tidx]
                 if hasattr(self, "mean") and hasattr(self, "std"):
-                    X = self._norm(X, self.mean, self.std)
+                    norm_fn = jax.jit(lambda x : self._norm(x / 255, self.mean, self.std))
+                    X = norm_fn(X.astype(np.float32))
                 X = jax.device_put(
                     X,
                     jax.devices(self.iter_device)[0]

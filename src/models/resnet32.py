@@ -221,7 +221,7 @@ class singleHeadResNet32(eqx.Module):
     ):
         subkey1, subkey2 = jax.random.split(key)
         self.resnet = ResNet32(input_channels, hidden_channels, num_classes, dropout, dtype, key=subkey1)
-        self.fc = eqx.nn.Linear(hidden_channels * 4, num_classes + 1, dtype=dtype, key=subkey2)
+        self.fc = eqx.nn.Linear(hidden_channels * 4, num_classes, dtype=dtype, key=subkey2)
         
     def __call__(
         self,

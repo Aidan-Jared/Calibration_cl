@@ -12,7 +12,7 @@ from optax import softmax_cross_entropy_with_integer_labels, GradientTransformat
 
 from src.socrates_loss import socrates_loss
 from src.dataloader import CL_DataLoader
-from src.util import model_forward, eval
+from src.utils import model_forward, eval
 
 
 def der_loss(

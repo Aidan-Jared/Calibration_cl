@@ -24,7 +24,7 @@ class Drop_Path(eqx.Module):
         x: Array,
         *,
         key: PRNGKeyArray | None = None,
-    ):
+    ) -> Array:
 
         def _drop(x, key):
             key_prob = 1 - self.p

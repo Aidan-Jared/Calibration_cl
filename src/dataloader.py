@@ -23,6 +23,7 @@ class CL_DataLoader:
         workers: int = 1,
         buffer: bool = False,
         buffer_size: int = 100,
+        selection_method: Callable | None = None,
         dtype=jnp.float32,
         *,
         key: PRNGKeyArray,
@@ -35,6 +36,7 @@ class CL_DataLoader:
         self.workers: int = workers
         self.buffer: bool = buffer
         self.buffer_size: int = buffer_size
+        self.selection_method: Callable | None = selection_method
         self.dtype: jnp.dtype = dtype
 
         self.len = getattr(dataset, "__len__", batch_size)
@@ -191,7 +193,6 @@ class CL_DataLoader:
         task_n: int,
         model: ResNet18 | ResNet32,
         state: eqx.nn._stateful.State,
-        selection_method: Callable | None = None,
         *,
         key: PRNGKeyArray,
     ):
@@ -199,7 +200,7 @@ class CL_DataLoader:
             return
         model = eqx.nn.inference_mode(model, True)
         key, subkey = jax.random.split(key)
-        if selection_method is None:
+        if self.selection_method is None:
             task_idx: Array[int] = self.tasks[:task_n + 1]
             slots_per_task: int = self.buffer_size // task_idx.size
             start = 0
@@ -230,3 +231,5 @@ class CL_DataLoader:
                 self.buffer_logits = self.buffer_logits.at[start:end].set(logits)
                 start = end
                 end = start + slots_per_task
+        else:
+            self.buffer_idx, self.buffer_targets, self.buffer_logits = self.selection_method(self, task_n, self.buffer_idx, self.buffer_targets, self.buffer_logits, model, state, key = key)

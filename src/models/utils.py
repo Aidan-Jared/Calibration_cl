@@ -19,7 +19,7 @@ def block_name_translator(path:tuple|str):
         name = re.sub(r'(blocks\.\d+)\.(fc)', r'\1.mlp.\2', name)
     return name
 
-# only works on HuggingFace models from timm, can be adapted for other models but needs to be modified
+# only works on timm models, can be adapted for other models but needs to be modified
 def torch_to_equinox(model, state_dict, embedding_dim):
     leaves, treedef = jax.tree_util.tree_flatten_with_path(
         eqx.filter(model, eqx.is_inexact_array)

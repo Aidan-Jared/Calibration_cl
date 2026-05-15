@@ -11,6 +11,7 @@ from src.models.resnet18 import singleHeadResNet18
 from src.models.vit import VisionTransformer
 
 from src.utils import load_data
+from src.buffer_selection import reservoir_sampling
 
 
 import argparse
@@ -45,6 +46,7 @@ parser.add_argument("--norm", type=parse_list, default=[(0.4914, 0.4822, 0.4465)
 parser.add_argument("--method", type=str, default="DER", choices=["DER"])
 parser.add_argument("--der-alpha", type=float, default=.5)
 parser.add_argument("--der-beta", type=float, default=.5)
+parser.add_argument("--selection-method", type=str, default="reservoir_sampling", choices=["reservoir_sampling", ""])
 parser.add_argument("--buffer-size", type=int, default=320)
 
 # socrates parameters
@@ -59,6 +61,11 @@ model_dict = {
     "singleHeadResNet32": singleHeadResNet32,
     "singleHeadResNet18": singleHeadResNet18,
     "VisionTransformer": VisionTransformer,
+}
+
+selection_dict = {
+    "reservoir_sampling": reservoir_sampling,
+    "": None,
 }
 
 
@@ -79,7 +86,8 @@ def main():
         subkey1, subkey2, subkey3, subkey4 = jax.random.split(KEY, 4)
         # prepare data loaders
         trainloader = CL_DataLoader(
-            train, batch_size=BATCH, splits=SPLITS, dtype=jnp.float32, key=subkey1, buffer = True, buffer_size = args["buffer_size"]
+            train, batch_size=BATCH, splits=SPLITS, dtype=jnp.float32, 
+            key=subkey1, buffer = True, buffer_size = args["buffer_size"], selection_method=selection_dict[args["selection_method"]],
         )
         testloader = CL_DataLoader(
             test, batch_size=BATCH, splits=SPLITS, dtype=jnp.float32, key=subkey2, buffer = False

@@ -87,6 +87,22 @@ def load_data(data_set: str):
             transform=normalize_data,
             download=True,
         )
+        
+    elif data_set == "ImageNet":
+        from torchvision.datasets import ImageNet
+        train = ImageNet(
+            root="Data/",
+            split="train",
+            transform=normalize_data,
+            download=True,
+        )
+    
+        test = ImageNet(
+            root="Data/",
+            split="test",
+            transform=normalize_data,
+            download=True,
+        )
 
     else:
         from torchvision.datasets import CIFAR10

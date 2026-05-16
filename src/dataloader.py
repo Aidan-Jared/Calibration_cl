@@ -23,10 +23,11 @@ class CL_DataLoader:
         workers: int = 1,
         buffer: bool = False,
         buffer_size: int = 100,
-        selection_method: Callable | None = None,
+        buff_size_mem: int | None = None,
+        socrates: bool = False,
         dtype=jnp.float32,
         *,
-        key: PRNGKeyArray,
+        key: PRNGKeyArray | None = None,
     ) -> None:
         self.splits: int = splits
         self.batch_size: int = batch_size
@@ -36,7 +37,9 @@ class CL_DataLoader:
         self.workers: int = workers
         self.buffer: bool = buffer
         self.buffer_size: int = buffer_size
-        self.selection_method: Callable | None = selection_method
+
+        self.buff_size_mem = buff_size_mem if buff_size_mem is not None else batch_size
+
         self.dtype: jnp.dtype = dtype
 
         self.len = getattr(dataset, "__len__", batch_size)
@@ -82,17 +85,36 @@ class CL_DataLoader:
 
             self.class_lengths = self.class_lengths.at[class_idx].set(num_samples)
 
-        self.tasks = np.arange(self.num_classes).reshape((self.splits, -1))
+        if key is None:
+            self.tasks = np.arange(self.num_classes).reshape((self.splits, -1))
+
+        else:
+            self.tasks = jax.random.choice(
+                key, self.num_classes, (self.num_classes,), replace=False
+            ).reshape(self.splits, -1)
+            self.tasks = jax.device_put(self.tasks, device)
+
         if self.buffer:
-            self.buffer_logits = jnp.zeros((self.buffer_size, self.num_classes + 1), device=device, dtype=jnp.float32)
-            self.buffer_idx = jnp.full((self.buffer_size,), -1, device=device, dtype=jnp.int32)
-            self.buffer_targets = jnp.zeros((self.buffer_size,), device=device, dtype=jnp.uint32)
+            if socrates:
+                num_classes = self.num_classes + 1
+            else:
+                num_classes = self.num_classes
+
+            self.buffer_logits = jnp.empty(
+                (self.buffer_size, num_classes), device=device, dtype=jnp.float32
+            )
+            self.buffer_idx = jnp.full(
+                (self.buffer_size,), -1, device=device, dtype=jnp.int32
+            )
+            self.buffer_targets = jnp.zeros(
+                (self.buffer_size,), device=device, dtype=jnp.uint32
+            )
 
     @staticmethod
     @jax.jit
-    def _norm(X, mean, std):
+    def _norm(X, mean, std) -> Array:
         return (X - mean) / std
-    
+
     def __len__(self) -> int:
         return self.len
 
@@ -110,26 +132,30 @@ class CL_DataLoader:
         task_idx = self.tasks[task_n]
         n = jnp.sum(self.class_lengths[task_idx]).item()
         return n // self.batch_size
-    
+
     def update_batch_size(self, new_batch_size: int):
         self.batch_size = new_batch_size
 
-    def _prepare_batch(self, X, y, class_idx, task, device, *, key):
-        X = jax.jit(lambda x: x / 255.0)(X.astype(jnp.float32))
+    def _prepare_batch(
+        self, X, y, logits, class_idx, task, device, *, key
+    ) -> tuple[Array, Array, Array, int, Array]:
+        if logits is None:
+            logits = jnp.zeros((1,))
+        X: Array = X.astype(jnp.float32) / 255.0
         if hasattr(self, "mean") and hasattr(self, "std"):
             X = self._norm(X, self.mean, self.std)
         X = jax.device_put(X, device)
         y = jax.device_put(y, device)
-        return X.astype(self.dtype), y.astype(jnp.int32), class_idx, task
+        logits = jax.device_put(logits, device)
+        return X.astype(self.dtype), y.astype(jnp.int32), class_idx, task, logits
 
     def sample(self, task_n: int, *, key: PRNGKeyArray):
-
         task_idx: Array[int] = self.tasks[task_n]
         n: int = jnp.sum(self.class_lengths[task_idx]).item()
         class_idx: Array[int] = self.class_indicies[task_idx].reshape(-1)
         labels: Array[int] = np.repeat(task_idx, self.class_lengths[task_idx])
         key, subkey = jax.random.split(key)
-            
+
         if key is not None:
             shuffle = jax.random.permutation(key=key, x=n)
             class_idx: Array[int] = class_idx[shuffle]
@@ -142,37 +168,40 @@ class CL_DataLoader:
         labels = labels[: batches * self.batch_size].reshape(batches, self.batch_size)
 
         if self.buffer and (task_n > 0 or jnp.any(self.buffer_idx > 0)):
-            n_buff = self.buffer_idx.shape[0] // batches
             filled = int(jnp.sum(self.buffer_idx >= 0))
-            key, subkey = jax.random.split(key)
-            idx = jax.random.choice(subkey, filled, shape=(n_buff * batches,)).reshape(batches, n_buff)
-
-            class_idx: Array[int] = jnp.concatenate([class_idx, self.buffer_idx[idx]], axis=1)
-            labels: Array[int] = jnp.concatenate([labels, self.buffer_targets[idx]], axis=1)
-            logits: Array[float] = self.buffer_logits[idx]
         else:
-            logits = None
-        
+            filled = None
+
         device = jax.devices(self.iter_device)[0]
 
         def raw_generator():
+            nonlocal key
             for i in range(batches):
-                X: Array = self.all_data[class_idx[i]]
-                y:Array[int] = labels[i] 
-                yield (X, y, class_idx[i], task_n)
+                if self.buffer and filled is not None:
+                    key, subkey = jax.random.split(key)
+                    buffer_samples = jax.random.choice(
+                        subkey, filled, shape=(self.buff_size_mem,), replace=False
+                    )
 
-        
-        if logits is not None:
-            i = 0
-            for X, y, class_idx_i, task_n_i in self._prefetch(raw_generator(), device, key=key):
-                old_logits = jax.device_put(logits[i], device)
-                class_idx_i = jax.device_put(class_idx_i, device)
-                yield (X, y, class_idx_i, task_n_i, old_logits)
-                i += 1
-        else:
-            for X, y, class_idx_i, task_n_i in self._prefetch(raw_generator(), device, key=key):
-                class_idx_i = jax.device_put(class_idx_i, device)
-                yield (X, y, class_idx_i, task_n_i, jnp.zeros((1,)))
+                    idx = jnp.concatenate(
+                        (class_idx[i], self.buffer_idx[buffer_samples])
+                    )
+
+                    X = self.all_data[idx]
+
+                    y: Array[int] = jnp.concatenate(
+                        (labels[i], self.buffer_targets[buffer_samples])
+                    )
+                    logits = self.buffer_logits[buffer_samples]
+
+                else:
+                    X: Array = self.all_data[class_idx[i]]
+                    y: Array[int] = labels[i]
+                    logits = None
+
+                yield (X, y, logits, class_idx[i], task_n)
+
+        yield from self._prefetch(raw_generator(), device, key=key)
 
     def _prefetch(self, generator, device, *, key):
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
@@ -183,7 +212,16 @@ class CL_DataLoader:
                 else:
                     subkey = None
                 futures.append(
-                    executor.submit(self._prepare_batch, item[0], item[1], item[2], item[3], device, key=subkey)
+                    executor.submit(
+                        self._prepare_batch,
+                        item[0],
+                        item[1],
+                        item[2],
+                        item[3],
+                        item[4],
+                        device,
+                        key=subkey,
+                    )
                 )
             while futures:
                 yield futures.pop(0).result()
@@ -193,6 +231,7 @@ class CL_DataLoader:
         task_n: int,
         model: ResNet18 | ResNet32,
         state: eqx.nn._stateful.State,
+        selection_method: Callable | None = None,
         *,
         key: PRNGKeyArray,
     ):
@@ -200,36 +239,45 @@ class CL_DataLoader:
             return
         model = eqx.nn.inference_mode(model, True)
         key, subkey = jax.random.split(key)
-        if self.selection_method is None:
-            task_idx: Array[int] = self.tasks[:task_n + 1]
+        if selection_method is None:
+            task_idx: Array[int] = self.tasks[: task_n + 1]
             slots_per_task: int = self.buffer_size // task_idx.size
             start = 0
             end: int = slots_per_task
             for c in task_idx.flatten():
                 labels = np.repeat(c, slots_per_task)
                 key, subkey = jax.random.split(key)
-                tidx = jax.random.choice(subkey, self.class_indicies[c], shape = (slots_per_task,))
+                tidx = jax.random.choice(
+                    subkey,
+                    self.class_indicies[c],
+                    shape=(slots_per_task,),
+                    replace=False,
+                )
                 self.buffer_idx = self.buffer_idx.at[start:end].set(tidx)
                 self.buffer_targets = self.buffer_targets.at[start:end].set(labels)
                 X = self.all_data[tidx]
                 if hasattr(self, "mean") and hasattr(self, "std"):
-                    norm_fn = jax.jit(lambda x : self._norm(x / 255, self.mean, self.std))
-                    X = norm_fn(X.astype(np.float32))
-                X = jax.device_put(
-                    X,
-                    jax.devices(self.iter_device)[0]
-                )
-                logits, _ = jax.vmap(model_forward,
-                    in_axes = (None, 0, None, None),
-                    out_axes = (0, None),
-                    axis_name = "batch",
+                    X = self._norm(X.astype(np.float32) / 255, self.mean, self.std)
+
+                X = jax.device_put(X, jax.devices(self.iter_device)[0])
+                logits, _ = jax.vmap(
+                    model_forward,
+                    in_axes=(None, 0, None, None),
+                    out_axes=(0, None),
+                    axis_name="batch",
                 )(model, X, state, key)
-                logits = jax.device_put(
-                    logits,
-                    jax.devices(self.device)[0]
-                )
+                logits = jax.device_put(logits, jax.devices(self.device)[0])
                 self.buffer_logits = self.buffer_logits.at[start:end].set(logits)
                 start = end
                 end = start + slots_per_task
         else:
-            self.buffer_idx, self.buffer_targets, self.buffer_logits = self.selection_method(self, task_n, self.buffer_idx, self.buffer_targets, self.buffer_logits, model, state, key = key)
+            self.buffer_idx, self.buffer_targets, self.buffer_logits = selection_method(
+                self,
+                task_n,
+                self.buffer_idx,
+                self.buffer_targets,
+                self.buffer_logits,
+                model,
+                state,
+                key=key,
+            )

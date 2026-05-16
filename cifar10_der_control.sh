@@ -4,16 +4,19 @@
 set -e
 
 uv run main.py \
-  --seed "[42]"\
+  --seed 42\
+  --model-runs 1\
   --lr 1e-3\
-  --batch_size 16\
-  --task_epochs 25\
-  --dropout 0.1\
+  --batch-size 32\
+  --task-epochs 10\
+  --dropout 0.0\
   --data_set "CIFAR10"\
-  --task_splits 5\
+  --task-splits 5\
   --model "singleHeadResNet32"\
   --norm "[(0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)]"\
   --method "DER"\
-  --der-alpha .5\
-  --der-beta .5\
-  --buffer_size 1000\
+  --der-alpha .1\
+  --der-beta .75\
+  --buffer-size 1000\
+  --replay-size 64\
+  --task-shuffle "True"

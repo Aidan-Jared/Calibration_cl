@@ -130,7 +130,7 @@ def load_data(data_set: str):
     return train, test
 
 
-def eval(model, state, tasks, testloader, *, key):
+def eval(model, state, tasks, testloader, *, key) -> dict[str, dict[str, float]]:
     model = eqx.nn.inference_mode(model, value=True)
 
     def loss_fn(model, x, y, state, key):

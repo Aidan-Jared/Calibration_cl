@@ -110,6 +110,7 @@ def main():
 
     key = jax.random.PRNGKey(args["seed"])
     seeds = jax.random.randint(key, (args["model_runs"],), 1, 5000)
+    df = pd.DataFrame()
 
     for SEED in seeds:
         KEY = jax.random.PRNGKey(SEED)
@@ -204,11 +205,11 @@ def main():
             key=subkey4,
         )
 
-        results = [dict({"seed": SEED}, **res) for res in results]
+        results = [{"seed": SEED} | res for res in res]
 
-        results.extend(res)
+        df = pd.concat([df, pd.DataFrame(results)])
 
-    results = pd.DataFrame.from_dict(results)
+    df.to_parquet("Runs/test.parquet")
 
 
 if __name__ == "__main__":

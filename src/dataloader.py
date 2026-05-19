@@ -1,15 +1,12 @@
 import jax
 import jax.numpy as jnp
-import equinox as eqx
 import numpy as np
 
 from torch.utils.data import Dataset
 from jaxtyping import PRNGKeyArray, Array
 from typing import Callable
 from concurrent.futures import ThreadPoolExecutor
-from src.models.resnet18 import ResNet18
-from src.models.resnet32 import ResNet32
-from src.utils import model_forward
+from src.buffer_selection import reservoir_sampling
 
 
 class CL_DataLoader:
@@ -37,6 +34,7 @@ class CL_DataLoader:
         self.workers: int = workers
         self.buffer: bool = buffer
         self.buffer_size: int = buffer_size
+        self.seen_examples = 0
 
         self.buff_size_mem = buff_size_mem if buff_size_mem is not None else batch_size
 
@@ -61,7 +59,6 @@ class CL_DataLoader:
         device = jax.devices(device)[0]
 
         all_data_np = np.stack(all_data)
-
         self.all_data = jax.device_put(all_data_np, device).astype(jnp.uint8)
 
         self.num_classes = len(class_to_indices)
@@ -137,16 +134,18 @@ class CL_DataLoader:
         self.batch_size = new_batch_size
 
     def _prepare_batch(
-        self, X, y, logits, class_idx, task, device, *, key
+        self, X: Array, y: Array, logits: Array | None, class_idx: Array, task: int, device: jax.Device, *, key: PRNGKeyArray
     ) -> tuple[Array, Array, Array, int, Array]:
         if logits is None:
-            logits = jnp.zeros((1,))
+            logits = jnp.zeros((1,self.num_classes))
         X: Array = X.astype(jnp.float32) / 255.0
         if hasattr(self, "mean") and hasattr(self, "std"):
-            X = self._norm(X, self.mean, self.std)
-        X = jax.device_put(X, device)
-        y = jax.device_put(y, device)
-        logits = jax.device_put(logits, device)
+            X: Array = self._norm(X, self.mean, self.std)
+        X: Array = jax.device_put(X, device)
+        y: Array = jax.device_put(y, device)
+        logits:Array = jax.device_put(logits, device)
+        class_idx:Array = jax.device_put(class_idx, device)
+
         return X.astype(self.dtype), y.astype(jnp.int32), class_idx, task, logits
 
     def sample(self, task_n: int, *, key: PRNGKeyArray):
@@ -228,56 +227,31 @@ class CL_DataLoader:
 
     def add_to_buffer(
         self,
-        task_n: int,
-        model: ResNet18 | ResNet32,
-        state: eqx.nn._stateful.State,
+        sample_idx: Array,
+        labels: Array,
+        logits: Array,
         selection_method: Callable | None = None,
         *,
         key: PRNGKeyArray,
     ):
         if not self.buffer:
             return
-        model = eqx.nn.inference_mode(model, True)
         key, subkey = jax.random.split(key)
+        
+        device: jax.Device = jax.devices(self.device)[0]
+        sample_idx: Array = jax.device_put(sample_idx, device)
+        labels: Array = jax.device_put(labels, device)
+        logits: Array = jax.device_put(logits, device)
         if selection_method is None:
-            task_idx: Array[int] = self.tasks[: task_n + 1]
-            slots_per_task: int = self.buffer_size // task_idx.size
-            start = 0
-            end: int = slots_per_task
-            for c in task_idx.flatten():
-                labels = np.repeat(c, slots_per_task)
-                key, subkey = jax.random.split(key)
-                tidx = jax.random.choice(
-                    subkey,
-                    self.class_indicies[c],
-                    shape=(slots_per_task,),
-                    replace=False,
-                )
-                self.buffer_idx = self.buffer_idx.at[start:end].set(tidx)
-                self.buffer_targets = self.buffer_targets.at[start:end].set(labels)
-                X = self.all_data[tidx]
-                if hasattr(self, "mean") and hasattr(self, "std"):
-                    X = self._norm(X.astype(np.float32) / 255, self.mean, self.std)
-
-                X = jax.device_put(X, jax.devices(self.iter_device)[0])
-                logits, _ = jax.vmap(
-                    model_forward,
-                    in_axes=(None, 0, None, None),
-                    out_axes=(0, None),
-                    axis_name="batch",
-                )(model, X, state, key)
-                logits = jax.device_put(logits, jax.devices(self.device)[0])
-                self.buffer_logits = self.buffer_logits.at[start:end].set(logits)
-                start = end
-                end = start + slots_per_task
-        else:
-            self.buffer_idx, self.buffer_targets, self.buffer_logits = selection_method(
-                self,
-                task_n,
-                self.buffer_idx,
-                self.buffer_targets,
-                self.buffer_logits,
-                model,
-                state,
-                key=key,
-            )
+            selection_method = reservoir_sampling
+        self.buffer_idx, self.buffer_targets, self.buffer_logits, self.seen_examples = selection_method(
+            sample_idx,
+            labels,
+            logits,
+            self.buffer_idx,
+            self.buffer_targets,
+            self.buffer_logits,
+            self.seen_examples,
+            device=device,
+            key=key,
+        )

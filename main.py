@@ -48,6 +48,7 @@ parser.add_argument("--replay-size", type=int, default=32)
 parser.add_argument("--task-splits", type=int, default=5)
 parser.add_argument("--task-epochs", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
+parser.add_argument("--momentum", type=float, default=0.0)
 parser.add_argument("--dropout", type=float, default=0.0)
 parser.add_argument("--task-shuffle", type=parse_bool, default=False)
 
@@ -103,6 +104,7 @@ def main():
     BATCH = args["batch_size"]
     SPLITS = args["task_splits"]
     LR = args["lr"]
+    MOMENTUM = args["momentum"]
     EPOCHS = args["task_epochs"]
     results = []
 
@@ -184,7 +186,7 @@ def main():
 
         optim = chain(
             add_decayed_weights(1e-4),
-            sgd(LR, momentum=0.9),
+            sgd(LR, momentum=MOMENTUM),
         )
 
         res = train_der(
@@ -205,11 +207,11 @@ def main():
             key=subkey4,
         )
 
-        results = [{"seed": SEED} | res for res in res]
+        results = [{"seed": SEED.item()} | res for res in res]
 
         df = pd.concat([df, pd.DataFrame(results)])
 
-    df.to_parquet("Runs/test.parquet")
+    df.to_parquet("Runs/test_control.parquet")
 
 
 if __name__ == "__main__":

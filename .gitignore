@@ -12,5 +12,8 @@ wheels/
 # training data
 Data/
 
+# experiment data
+Runs/
+
 #temp
 src/models/test.py

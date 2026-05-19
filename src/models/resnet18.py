@@ -154,6 +154,7 @@ class ResNet18(eqx.Module):
     # fc: eqx.nn.Linear
 
     hidden_channels: int
+    dropout: float = eqx.field(static=True)
 
     avgpool: eqx.nn.AdaptiveAvgPool2d
 
@@ -162,12 +163,14 @@ class ResNet18(eqx.Module):
         input_channels: int,
         hidden_channels: int = 64,
         num_classes: int = 10,
+        dropout: float = 0.1,
         dtype=jnp.float32,
         *,
         key: PRNGKeyArray,
     ):
         subkey1, subkey2, subkey3, subkey4, subkey5, subkey6 = jax.random.split(key, 6)
         self.hidden_channels = hidden_channels
+        self.dropout = dropout
 
         self.conv1 = eqx.nn.Conv2d(
             input_channels,
@@ -207,7 +210,12 @@ class ResNet18(eqx.Module):
             key, subkey = jax.random.split(key)
             layers.append(
                 BasicBlock(
-                    self.hidden_channels, out_channels, stride, dtype=dtype, key=subkey
+                    self.hidden_channels,
+                    out_channels,
+                    stride,
+                    dropout=self.dropout,
+                    dtype=dtype,
+                    key=subkey,
                 )
             )
             self.hidden_channels = out_channels
@@ -255,13 +263,14 @@ class singleHeadResNet18(eqx.Module):
         hidden_channels: int = 64,
         num_classes: int = 10,
         num_splits: int = 0,  # not used but here for compatibility
+        dropout: float = 0.1,
         dtype=jnp.float32,
         *,
         key: PRNGKeyArray,
     ):
         subkey1, subkey2 = jax.random.split(key)
         self.resnet = ResNet18(
-            input_channels, hidden_channels, num_classes, dtype, key=subkey1
+            input_channels, hidden_channels, num_classes, dropout, dtype, key=subkey1
         )
         self.fc = eqx.nn.Linear(
             hidden_channels * 8, num_classes, dtype=dtype, key=subkey2
@@ -271,10 +280,10 @@ class singleHeadResNet18(eqx.Module):
         self,
         x: Float[Array, "batch c w h"],
         state: PyTree,
-        task: int,  # not used but here for compatibility
+        # task: int,  # not used but here for compatibility
         *,
         key: PRNGKeyArray,
-    ):
+    ) -> tuple[Array, eqx.nn._stateful.State]:
         out, state = self.resnet(x, state, key=key)
         out = self.fc(out)
         return out, state

@@ -107,13 +107,13 @@ class CL_DataLoader:
                 num_classes = self.num_classes
 
             self.buffer_logits = jnp.empty(
-                (self.buffer_size, num_classes), device=device, dtype=jnp.float32
+                (self.buffer_size + 1, num_classes), device=device, dtype=jnp.float32
             )
             self.buffer_idx = jnp.full(
-                (self.buffer_size,), -1, device=device, dtype=jnp.int32
+                (self.buffer_size + 1,), -1, device=device, dtype=jnp.int32
             )
             self.buffer_targets = jnp.zeros(
-                (self.buffer_size,), device=device, dtype=jnp.uint32
+                (self.buffer_size + 1,), device=device, dtype=jnp.uint32
             )
 
     @staticmethod
@@ -132,7 +132,7 @@ class CL_DataLoader:
     def _random_crop(key, X, crop_size, padding=None):
         if padding is not None:
             X = jnp.pad(
-                X, ((0, 0),(padding, padding), (padding, padding)), mode="reflect"
+                X, ((0, 0), (padding, padding), (padding, padding)), mode="reflect"
             )
         h, w = X.shape[1:]
         crop_h, crop_w = crop_size
@@ -140,7 +140,7 @@ class CL_DataLoader:
         subkey1, subkey2 = jax.random.split(key)
 
         top = jax.random.randint(subkey1, (), 0, h - crop_h + 1)
-        left = jax.random.randint(subkey2, (), 0, 2 - crop_w + 1)
+        left = jax.random.randint(subkey2, (), 0, w - crop_w + 1)
 
         return jax.lax.dynamic_slice(X, (0, top, left), (X.shape[0], crop_h, crop_w))
 
@@ -222,7 +222,7 @@ class CL_DataLoader:
         labels = labels[: batches * self.batch_size].reshape(batches, self.batch_size)
 
         if self.buffer and (task_n > 0 and jnp.any(self.buffer_idx > 0)):
-            filled = int(jnp.sum(self.buffer_idx >= 0))
+            filled = int(jnp.sum(self.buffer_idx[:-1] >= 0))
         else:
             filled = None
 

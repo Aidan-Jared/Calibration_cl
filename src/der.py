@@ -34,7 +34,7 @@ def der_loss(
     soc_alpha: float | None = None,
     *,
     key: PRNGKeyArray,
-) -> tuple[Array, tuple[Array, float, State, Array | None, Array | None]]:
+):
     key, *keys = jax.random.split(key, x.shape[0] + 1)
     keys = jnp.array(keys)
 
@@ -54,8 +54,10 @@ def der_loss(
         or gamma is None
         or indexes is None
     ):
-        loss = softmax_cross_entropy_with_integer_labels(
-            logits[:batch_size], y[:batch_size]
+        loss = jnp.mean(
+            softmax_cross_entropy_with_integer_labels(
+                logits[:batch_size], y[:batch_size]
+            )
         )
         sloss = jax.lax.cond(
             buffer_filled,
@@ -70,7 +72,7 @@ def der_loss(
             lambda: 0.0,
         )
         loss += sloss
-        # jax.debug.breakpoint()
+        # jax.debug.print("{}", sloss)
         if beta != 0.0:
             sloss = jax.lax.cond(
                 buffer_filled,
@@ -85,9 +87,10 @@ def der_loss(
             )
             # jax.debug.print("{}", y[batch_size:])
             # jax.debug.breakpoint()
+            # jax.debug.print("{}", sloss)
             loss += sloss
         # jax.debug.breakpoint()
-        return jnp.mean(loss), (logits, acc, state, None, None)
+        return loss, (logits, acc, state, None, None)  # typing: ignore
     else:
         loss, up_prob_history = jax.vmap(
             socrates_loss, in_axes=(0, 0, 0, 0, None, None)
@@ -168,24 +171,24 @@ def train_step(
     *,
     key: PRNGKeyArray,
 ):
-    (loss, (logits, acc, state, updated, prob_history)), grads = eqx.filter_value_and_grad(
-        der_loss, has_aux=True
-    )(
-        model,
-        x,
-        y,
-        state,
-        old_logits,
-        batch_size,
-        der_alpha,
-        beta,
-        buffer_filled,
-        prob_history,
-        indexes,
-        updated,
-        gamma,
-        soc_alpha,
-        key=key,
+    (loss, (logits, acc, state, updated, prob_history)), grads = (
+        eqx.filter_value_and_grad(der_loss, has_aux=True)(
+            model,
+            x,
+            y,
+            state,
+            old_logits,
+            batch_size,
+            der_alpha,
+            beta,
+            buffer_filled,
+            prob_history,
+            indexes,
+            updated,
+            gamma,
+            soc_alpha,
+            key=key,
+        )
     )
     updates, opt_state = optim.update(grads, opt_state, eqx.filter(model, eqx.is_array))
 
@@ -216,9 +219,9 @@ def train_der(
     batch_size = trainloader.batch_size
     results = []
     train_step_jit = eqx.filter_jit(train_step)
+    opt_state = optim.init(eqx.filter(model, eqx.is_array))
     for task in range(tasks):
         model = eqx.nn.inference_mode(model, False)
-        opt_state = optim.init(eqx.filter(model, eqx.is_array))
         print(f"training task {task}")
         print("-" * 50)
         for epoch in range(epochs):
@@ -232,7 +235,7 @@ def train_der(
                 total=trainloader.iters(task),
             )  # train_step_jit = train_step
             for step, (x, y, indexes, task_n, old_logits) in pbar:
-                key, subkey1, subkey2 = jax.random.split(key,3)
+                key, subkey1, subkey2 = jax.random.split(key, 3)
                 buffer_filled = jnp.any(trainloader.buffer_idx >= 0).item() and task > 0
                 model, logits, loss, acc, state, updated, prob_history, opt_state = (
                     train_step_jit(
@@ -255,15 +258,15 @@ def train_der(
                         key=subkey1,
                     )
                 )
-                
+
                 trainloader.add_to_buffer(
-                    indexes,
-                    y,
-                    logits,
+                    indexes[:batch_size],
+                    y[:batch_size],
+                    logits[:batch_size],
                     selection_method,
-                    key=subkey2
+                    key=subkey2,
                 )
-                
+
                 epoch_loss.append(loss)
                 epoch_acc.append(acc)
                 if (step + 1) % print_every == 0:

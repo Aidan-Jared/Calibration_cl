@@ -1,11 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable
+
 import jax
 import jax.numpy as jnp
 import numpy as np
-
+from jaxtyping import Array, PRNGKeyArray
 from torch.utils.data import Dataset
-from jaxtyping import PRNGKeyArray, Array
-from typing import Callable
-from concurrent.futures import ThreadPoolExecutor
+
 from src.buffer_selection import reservoir_sampling
 
 
@@ -21,6 +22,10 @@ class CL_DataLoader:
         buffer: bool = False,
         buffer_size: int = 100,
         buff_size_mem: int | None = None,
+        transform: bool = True,
+        crop: tuple[int, int] = (32, 32),
+        padding: int = 4,
+        flip_p: float = 0.5,
         socrates: bool = False,
         dtype=jnp.float32,
         *,
@@ -37,6 +42,10 @@ class CL_DataLoader:
         self.seen_examples = 0
 
         self.buff_size_mem = buff_size_mem if buff_size_mem is not None else batch_size
+        self.Transform = transform
+        self.crop = crop
+        self.padding = padding
+        self.flip_p = flip_p
 
         self.dtype: jnp.dtype = dtype
 
@@ -112,6 +121,42 @@ class CL_DataLoader:
     def _norm(X, mean, std) -> Array:
         return (X - mean) / std
 
+    @staticmethod
+    @jax.jit
+    def _random_hflip(key, X, p):
+        flip = jax.random.uniform(key) < p
+        return jax.lax.cond(flip, lambda x: jnp.flip(x, axis=1), lambda x: x, X)
+
+    @staticmethod
+    @jax.jit(static_argnames=("crop_size", "padding"))
+    def _random_crop(key, X, crop_size, padding=None):
+        if padding is not None:
+            X = jnp.pad(
+                X, ((0, 0),(padding, padding), (padding, padding)), mode="reflect"
+            )
+        h, w = X.shape[1:]
+        crop_h, crop_w = crop_size
+
+        subkey1, subkey2 = jax.random.split(key)
+
+        top = jax.random.randint(subkey1, (), 0, h - crop_h + 1)
+        left = jax.random.randint(subkey2, (), 0, 2 - crop_w + 1)
+
+        return jax.lax.dynamic_slice(X, (0, top, left), (X.shape[0], crop_h, crop_w))
+
+    def _transform(self, key, X, crop_size, padding=4, flip_p=0.05):
+        subkey1, subkey2 = jax.random.split(key)
+        X = self._random_crop(subkey1, X, crop_size, padding)
+        X = self._random_hflip(subkey2, X, flip_p)
+        return X
+
+    def transform_batch(self, key, batch, crop_size, padding=4, flip_p=0.5):
+        keys = jax.random.split(key, batch.shape[0])
+        return jax.vmap(
+            lambda k, img: self._transform(k, img, crop_size, padding, flip_p),
+            in_axes=(0, 0),
+        )(keys, batch)
+
     def __len__(self) -> int:
         return self.len
 
@@ -134,17 +179,27 @@ class CL_DataLoader:
         self.batch_size = new_batch_size
 
     def _prepare_batch(
-        self, X: Array, y: Array, logits: Array | None, class_idx: Array, task: int, device: jax.Device, *, key: PRNGKeyArray
+        self,
+        X: Array,
+        y: Array,
+        logits: Array | None,
+        class_idx: Array,
+        task: int,
+        device: jax.Device,
+        *,
+        key,
     ) -> tuple[Array, Array, Array, int, Array]:
         if logits is None:
-            logits = jnp.zeros((1,self.num_classes))
+            logits = jnp.zeros((1, self.num_classes))
+        if self.Transform:
+            X = self.transform_batch(key, X, self.crop, self.padding, self.flip_p)
         X: Array = X.astype(jnp.float32) / 255.0
         if hasattr(self, "mean") and hasattr(self, "std"):
             X: Array = self._norm(X, self.mean, self.std)
         X: Array = jax.device_put(X, device)
         y: Array = jax.device_put(y, device)
-        logits:Array = jax.device_put(logits, device)
-        class_idx:Array = jax.device_put(class_idx, device)
+        logits: Array = jax.device_put(logits, device)
+        class_idx: Array = jax.device_put(class_idx, device)
 
         return X.astype(self.dtype), y.astype(jnp.int32), class_idx, task, logits
 
@@ -166,7 +221,7 @@ class CL_DataLoader:
         )
         labels = labels[: batches * self.batch_size].reshape(batches, self.batch_size)
 
-        if self.buffer and (task_n > 0 or jnp.any(self.buffer_idx > 0)):
+        if self.buffer and (task_n > 0 and jnp.any(self.buffer_idx > 0)):
             filled = int(jnp.sum(self.buffer_idx >= 0))
         else:
             filled = None
@@ -179,7 +234,7 @@ class CL_DataLoader:
                 if self.buffer and filled is not None:
                     key, subkey = jax.random.split(key)
                     buffer_samples = jax.random.choice(
-                        subkey, filled, shape=(self.buff_size_mem,), replace=False
+                        subkey, filled, shape=(self.buff_size_mem,), replace=True
                     )
 
                     idx = jnp.concatenate(
@@ -197,8 +252,9 @@ class CL_DataLoader:
                     X: Array = self.all_data[class_idx[i]]
                     y: Array[int] = labels[i]
                     logits = None
+                    idx = class_idx[i]
 
-                yield (X, y, logits, class_idx[i], task_n)
+                yield (X, y, logits, idx, task_n)
 
         yield from self._prefetch(raw_generator(), device, key=key)
 
@@ -237,21 +293,23 @@ class CL_DataLoader:
         if not self.buffer:
             return
         key, subkey = jax.random.split(key)
-        
+
         device: jax.Device = jax.devices(self.device)[0]
         sample_idx: Array = jax.device_put(sample_idx, device)
         labels: Array = jax.device_put(labels, device)
         logits: Array = jax.device_put(logits, device)
         if selection_method is None:
             selection_method = reservoir_sampling
-        self.buffer_idx, self.buffer_targets, self.buffer_logits, self.seen_examples = selection_method(
-            sample_idx,
-            labels,
-            logits,
-            self.buffer_idx,
-            self.buffer_targets,
-            self.buffer_logits,
-            self.seen_examples,
-            device=device,
-            key=key,
+        self.buffer_idx, self.buffer_targets, self.buffer_logits, self.seen_examples = (
+            selection_method(
+                sample_idx,
+                labels,
+                logits,
+                self.buffer_idx,
+                self.buffer_targets,
+                self.buffer_logits,
+                self.seen_examples,
+                device=device,
+                key=key,
+            )
         )

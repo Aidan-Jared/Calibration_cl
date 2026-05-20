@@ -71,6 +71,7 @@ class BasicBlock(eqx.Module):
             kernel_size=3,
             stride=stride,
             padding=1,
+            use_bias=False,
             dtype=dtype,
             key=subkey1,
         )
@@ -80,6 +81,7 @@ class BasicBlock(eqx.Module):
             kernel_size=3,
             stride=1,
             padding=1,
+            use_bias=False,
             dtype=dtype,
             key=subkey2,
         )
@@ -113,11 +115,11 @@ class BasicBlock(eqx.Module):
     ) -> tuple[Array, PyTree]:
         out = self.conv1(x)
         out, state = self.bn1(out, state)
-        out = jax.nn.elu(out)
+        out = jax.nn.relu(out)
 
         out = self.conv2(out)
         out, state = self.bn2(out, state)
-        out = jax.nn.elu(out)
+        # out = jax.nn.elu(out)
 
         out = self.dropout(out, key=key)
 
@@ -127,19 +129,9 @@ class BasicBlock(eqx.Module):
         else:
             identity = x
 
-        # def _shortcut(x, state):
-        #     i = self.shortcut[0](x)
-        #     i, s = self.shortcut[1](i, state)
-        #     return i, s
-
-        # identity, state = jax.lax.cond(
-        #     self.shortcut is not None, _shortcut, lambda x, s: (x, s), x, state
-
-        # )
-
         out = out + identity
 
-        out = jax.nn.elu(out)
+        out = jax.nn.relu(out)
         return out, state
 
 
@@ -230,7 +222,7 @@ class ResNet18(eqx.Module):
     ):
         out = self.conv1(x)
         out, state = self.bn1(out, state)
-        out = jax.nn.elu(out)
+        out = jax.nn.relu(out)
 
         for block in self.layer1:
             key, subkey = jax.random.split(key)

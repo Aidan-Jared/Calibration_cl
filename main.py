@@ -1,23 +1,20 @@
+import argparse
+import ast
+import os
+
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import equinox as eqx
 import pandas as pd
+from optax import add_decayed_weights, chain, sgd
 
-from optax import sgd, add_decayed_weights, chain
-
-from src.der import train_der
-from src.dataloader import CL_DataLoader
-from src.models.resnet32 import singleHeadResNet32
-from src.models.resnet18 import singleHeadResNet18
-from src.models.vit import VisionTransformer
-
-from src.utils import load_data
 from src.buffer_selection import reservoir_sampling
-
-
-import argparse
-import os
-import ast
+from src.dataloader import CL_DataLoader
+from src.der import train_der
+from src.models.resnet18 import singleHeadResNet18
+from src.models.resnet32 import singleHeadResNet32
+from src.models.vit import VisionTransformer
+from src.utils import load_data
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -50,6 +47,7 @@ parser.add_argument("--task-epochs", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--momentum", type=float, default=0.0)
 parser.add_argument("--dropout", type=float, default=0.0)
+parser.add_argument("--transform", type=parse_bool, default="True")
 parser.add_argument("--task-shuffle", type=parse_bool, default=False)
 
 # dataset parameters
@@ -138,6 +136,7 @@ def main():
             buffer=True,
             buffer_size=args["buffer_size"],
             buff_size_mem=args["replay_size"],
+            transform=args["transform"],
             socrates=soc,
         )
 
@@ -146,6 +145,7 @@ def main():
             batch_size=BATCH,
             splits=SPLITS,
             dtype=jnp.float32,
+            transform=args["transform"],
             key=subkey1,
             buffer=False,
         )
@@ -185,7 +185,7 @@ def main():
             gamma = None
 
         optim = chain(
-            add_decayed_weights(1e-4),
+            # add_decayed_weights(1e-4),
             sgd(LR, momentum=MOMENTUM),
         )
 

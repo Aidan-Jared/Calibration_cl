@@ -30,22 +30,23 @@ def reservoir_sampling(
             choices.append(i)
         else:
             key, subkey = jax.random.split(key)
-            rand_idx = jax.random.randint(subkey, (), 0, seen_examples+1).item()
+            rand_idx = jax.random.randint(subkey, (), 0, seen_examples).item()
 
             if rand_idx < buffer_size:
                 replace.append(rand_idx)
                 choices.append(i)
-            
+
         seen_examples += 1
 
-    choices = jnp.array(choices, device = device, dtype=jnp.uint32)
-    replace = jnp.array(replace, device = device, dtype=jnp.uint32)
+    choices = jnp.array(choices, device=device, dtype=jnp.uint32)
+    replace = jnp.array(replace, device=device, dtype=jnp.uint32)
     buffer_idx = buffer_idx.at[replace].set(sample_idx[choices])
     buffer_targets = buffer_targets.at[replace].set(labels[choices].astype(jnp.uint32))
     buffer_logits = buffer_logits.at[replace].set(logits[choices])
-    
+
     return buffer_idx, buffer_targets, buffer_logits, seen_examples
-    
+
+
 #  not implemented yet
 def calibration_balanced_class_selection(
     dataloaderh,

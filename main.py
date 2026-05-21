@@ -40,12 +40,14 @@ parser.add_argument(
 )
 
 # training hyperparameters
-parser.add_argument("--batch-size", type=int, default=32)
 parser.add_argument("--replay-size", type=int, default=32)
 parser.add_argument("--task-splits", type=int, default=5)
+
 parser.add_argument("--task-epochs", type=int, default=1)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--momentum", type=float, default=0.0)
+parser.add_argument("--batch-size", type=int, default=32)
+
 parser.add_argument("--dropout", type=float, default=0.0)
 parser.add_argument("--transform", type=parse_bool, default="True")
 parser.add_argument("--task-shuffle", type=parse_bool, default=False)
@@ -104,7 +106,6 @@ def main():
     LR = args["lr"]
     MOMENTUM = args["momentum"]
     EPOCHS = args["task_epochs"]
-    results = []
 
     train, test = load_data(args["data_set"])
 

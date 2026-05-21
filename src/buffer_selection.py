@@ -49,7 +49,7 @@ def reservoir_sampling(
     replace, choices = jax.vmap(add_to_buffer, in_axes=(0, None, 0))(
         batch_idxes, seen_examples, keys
     )
-    
+
     seen_examples += batch_size
 
     choices = jnp.array(choices, device=device, dtype=jnp.int32)
@@ -60,20 +60,6 @@ def reservoir_sampling(
 
     return buffer_idx, buffer_targets, buffer_logits, seen_examples
 
-
-    replace, choices = jax.vmap(add_to_buffer, in_axes=(0, None, 0))(
-        batch_idxes, seen_examples, keys
-    )
-    
-    seen_examples += batch_size
-
-    choices = jnp.array(choices, device=device, dtype=jnp.int32)
-    replace = jnp.array(replace, device=device, dtype=jnp.int32)
-    buffer_idx = buffer_idx.at[replace].set(sample_idx[choices])
-    buffer_targets = buffer_targets.at[replace].set(labels[choices].astype(jnp.uint32))
-    buffer_logits = buffer_logits.at[replace].set(logits[choices])
-
-    return buffer_idx, buffer_targets, buffer_logits, seen_examples
 
 #  not implemented yet
 def calibration_balanced_class_selection(

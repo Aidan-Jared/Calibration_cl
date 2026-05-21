@@ -9,9 +9,8 @@ uv run main.py \
   --lr 3e-3\
   --momentum 0.9\
   --batch-size 32\
-  --task-epochs 50\
+  --task-epochs 10\
   --transform "True"\
-  --task-epochs 50\
   --dropout 0.0\
   --data_set "CIFAR10"\
   --task-splits 5\

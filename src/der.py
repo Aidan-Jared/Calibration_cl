@@ -59,22 +59,22 @@ def der_loss(
                 logits[:batch_size], y[:batch_size]
             )
         )
-        sloss = jax.lax.cond(
-            buffer_filled,
-            lambda: der_alpha
-            * jnp.mean(
-                (
-                    logits[batch_size : batch_size + old_logits.shape[0] // 2]
-                    - old_logits[: old_logits.shape[0] // 2]
-                )
-                ** 2
-            ),
-            lambda: 0.0,
-        )
-        loss += sloss
-        # jax.debug.print("{}", sloss)
-        if beta != 0.0:
-            sloss = jax.lax.cond(
+        if beta != 0:
+            loss += jax.lax.cond(
+                buffer_filled,
+                lambda: der_alpha
+                * jnp.mean(
+                    (
+                        logits[batch_size : batch_size + old_logits.shape[0] // 2]
+                        - old_logits[: old_logits.shape[0] // 2]
+                    )
+                    ** 2
+                ),
+                lambda: 0.0,
+            )
+            # jax.debug.print("{}", sloss)
+
+            loss += jax.lax.cond(
                 buffer_filled,
                 lambda: beta
                 * jnp.mean(
@@ -88,7 +88,14 @@ def der_loss(
             # jax.debug.print("{}", y[batch_size:])
             # jax.debug.breakpoint()
             # jax.debug.print("{}", sloss)
-            loss += sloss
+
+        else:
+            loss += jax.lax.cond(
+                buffer_filled,
+                lambda: der_alpha * jnp.mean((logits[batch_size:] - old_logits) ** 2),
+                lambda: 0.0,
+            )
+
         # jax.debug.breakpoint()
         return loss, (logits, acc, state, None, None)  # typing: ignore
     else:
@@ -103,22 +110,21 @@ def der_loss(
             soc_alpha,
         )
         loss = jnp.mean(loss)
-        sloss = jax.lax.cond(
-            buffer_filled,
-            lambda: der_alpha
-            * jnp.mean(
-                (
-                    logits[batch_size : batch_size + old_logits.shape[0] // 2]
-                    - old_logits[: old_logits.shape[0] // 2]
-                )
-                ** 2
-            ),
-            lambda: 0.0,
-        )
-        loss += sloss
-        prob_history = prob_history.at[indexes[:batch_size]].set(up_prob_history)
-        updated = updated.at[indexes[:batch_size]].set(1)
         if beta != 0:
+            loss += jax.lax.cond(
+                buffer_filled,
+                lambda: der_alpha
+                * jnp.mean(
+                    (
+                        logits[batch_size : batch_size + old_logits.shape[0] // 2]
+                        - old_logits[: old_logits.shape[0] // 2]
+                    )
+                    ** 2
+                ),
+                lambda: 0.0,
+            )
+            prob_history = prob_history.at[indexes[:batch_size]].set(up_prob_history)
+            updated = updated.at[indexes[:batch_size]].set(1)
 
             def socrates_loss_with_old_logits(
                 logits, prob_history, y, updated, gamma, soc_alpha
@@ -133,10 +139,12 @@ def der_loss(
                     gamma,
                     soc_alpha,
                 )
+
                 prob_history = prob_history.at[
                     indexes[batch_size + old_logits.shape[0] // 2 :]
                 ].set(up_prob_history)
                 updated = updated.at[indexes[batch_size:]].set(1)
+
                 return jnp.mean(sloss), prob_history, updated
 
             sloss, prob_history, updated = jax.lax.cond(
@@ -147,6 +155,13 @@ def der_loss(
                 lambda: (jnp.array(0.0), prob_history, updated),
             )
             loss = loss + beta * sloss
+        else:
+            sloss = jax.lax.cond(
+                buffer_filled,
+                lambda: der_alpha * jnp.mean((logits[batch_size:] - old_logits) ** 2),
+                lambda: 0.0,
+            )
+            loss += sloss
 
         return loss, (logits, acc, state, updated, prob_history)
 

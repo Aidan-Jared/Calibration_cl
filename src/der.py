@@ -64,10 +64,7 @@ def der_loss(
                 buffer_filled,
                 lambda: der_alpha
                 * jnp.mean(
-                    (
-                        logits[batch_size : batch_size + old_logits.shape[0] // 2]
-                        - old_logits
-                    )
+                    (logits[batch_size : batch_size + old_logits.shape[0]] - old_logits)
                     ** 2
                 ),
                 lambda: 0.0,
@@ -79,8 +76,8 @@ def der_loss(
                 lambda: beta
                 * jnp.mean(
                     softmax_cross_entropy_with_integer_labels(
-                        logits[batch_size + old_logits.shape[0] // 2 :],
-                        y[batch_size + old_logits.shape[0] // 2 :],
+                        logits[batch_size + old_logits.shape[0] :],
+                        y[batch_size + old_logits.shape[0] :],
                     )
                 ),
                 lambda: 0.0,
@@ -115,10 +112,7 @@ def der_loss(
                 buffer_filled,
                 lambda: der_alpha
                 * jnp.mean(
-                    (
-                        logits[batch_size : batch_size + old_logits.shape[0] // 2]
-                        - old_logits
-                    )
+                    (logits[batch_size : batch_size + old_logits.shape[0]] - old_logits)
                     ** 2
                 ),
                 lambda: 0.0,
@@ -132,16 +126,16 @@ def der_loss(
                 sloss, up_prob_history = jax.vmap(
                     socrates_loss, in_axes=(0, 0, 0, 0, None, None)
                 )(
-                    logits[batch_size + old_logits.shape[0] // 2 :],
-                    prob_history[indexes[batch_size + old_logits.shape[0] // 2 :]],
-                    y[batch_size + old_logits.shape[0] // 2 :],
-                    updated[indexes[batch_size + old_logits.shape[0] // 2 :]],
+                    logits[batch_size + old_logits.shape[0] :],
+                    prob_history[indexes[batch_size + old_logits.shape[0] :]],
+                    y[batch_size + old_logits.shape[0] :],
+                    updated[indexes[batch_size + old_logits.shape[0] :]],
                     gamma,
                     soc_alpha,
                 )
 
                 prob_history = prob_history.at[
-                    indexes[batch_size + old_logits.shape[0] // 2 :]
+                    indexes[batch_size + old_logits.shape[0] :]
                 ].set(up_prob_history)
                 updated = updated.at[indexes[batch_size:]].set(1)
 
@@ -304,7 +298,7 @@ def DER_train(
             eval_loss = []
             model = eqx.nn.inference_mode(model, True)
             for step, (x, y, indexes, task_n, old_logits) in enumerate(
-                testloader.sample(task, key=subkey)
+                testloader.sample(task, beta=beta, key=subkey)
             ):
                 logits, _ = jax.vmap(
                     model_forward_jit,

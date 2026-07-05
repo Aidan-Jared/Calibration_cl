@@ -153,7 +153,7 @@ def eval(model, state, tasks, testloader, *, key) -> dict[str, dict[str, float]]
         task_loss = []
         task_acc = []
         pbar = tqdm(
-            enumerate(testloader.sample(p_task, key=subkey)),
+            enumerate(testloader.sample(p_task, beta=0, key=subkey)),
             total=testloader.iters(p_task),
             ncols=75,
         )

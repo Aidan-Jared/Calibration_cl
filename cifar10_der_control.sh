@@ -9,7 +9,7 @@ uv run main.py \
   --lr 3e-3\
   --momentum 0.9\
   --batch-size 32\
-  --task-epochs 10\
+  --task-epochs 1\
   --transform "True"\
   --dropout 0.0\
   --data_set "CIFAR10"\
@@ -20,5 +20,5 @@ uv run main.py \
   --der-alpha .2\
   --der-beta .5\
   --buffer-size 600\
-  --replay-size 64\
+  --replay-size 32\
   --task-shuffle "False"

@@ -136,7 +136,7 @@ def main():
             key=subkey1,
             buffer=True,
             buffer_size=args["buffer_size"],
-            buff_size_mem=args["replay_size"],
+            replay_size=args["replay_size"],
             transform=args["transform"],
             socrates=soc,
         )

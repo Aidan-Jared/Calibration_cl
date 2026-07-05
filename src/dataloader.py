@@ -228,21 +228,27 @@ class CL_DataLoader:
 
         device = jax.devices(self.iter_device)[0]
 
-        def get_buffer(filled, key, i):
+        def get_buffer(filled, key, i, X: Array | None = None, y: Array | None = None):
             key, subkey = jax.random.split(key)
             buffer_samples = jax.random.choice(
                 subkey, filled, shape=(self.buff_size_mem,), replace=False
             )
 
-            idx = jnp.concatenate((class_idx[i], self.buffer_idx[buffer_samples]))
+            if X is None and y is None:
+                idx = jnp.concatenate((class_idx[i], self.buffer_idx[buffer_samples]))
+                X = self.all_data[idx]
 
-            X = self.all_data[idx]
-
-            y: Array[int] = jnp.concatenate(
-                (labels[i], self.buffer_targets[buffer_samples])
-            )
-            logits = self.buffer_logits[buffer_samples]
-            return X, y, logits, key
+                y: Array[int] = jnp.concatenate(
+                    (labels[i], self.buffer_targets[buffer_samples])
+                )
+                logits = self.buffer_logits[buffer_samples]
+                return X, y, logits, key
+            else:
+                X = jnp.concatenate((X, self.all_data[buffer_samples]))
+                y: Array[int] = jnp.concatenate(
+                    (y, self.buffer_targets[buffer_samples])
+                )
+                return X, y, key
 
         def raw_generator():
             nonlocal key
@@ -251,12 +257,12 @@ class CL_DataLoader:
                     X, y, logits, key = get_buffer(filled, key, i)
 
                     if beta is not None and beta > 0:
-                        X, y, _, key = get_buffer(filled, key, i)
+                        X, y, key = get_buffer(filled, key, i, X=X, y=y)
                 else:
                     X: Array = self.all_data[class_idx[i]]
                     y: Array[int] = labels[i]
                     logits = None
-                    idx = class_idx[i]
+                idx = class_idx[i]
 
                 yield (X, y, logits, idx, task_n)
 

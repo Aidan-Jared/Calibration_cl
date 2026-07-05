@@ -74,14 +74,14 @@ class BasicBlock(eqx.Module):
         state: PyTree,
         *,
         key: PRNGKeyArray | None = None,
-    )  -> tuple[Array, eqx.nn._stateful.State]:
+    ) -> tuple[Array, eqx.nn._stateful.State]:
         out = self.conv1(x)
+        out = jax.nn.relu(out)
         out, state = self.bn1(out, state)
-        out = jax.nn.elu(out)
 
         out = self.conv2(out)
         out, state = self.bn2(out, state)
-        out = jax.nn.elu(out)
+        # out = jax.nn.relu(out)
 
         out = self.dropout(out, key=key)
 

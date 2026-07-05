@@ -10,7 +10,7 @@ from optax import add_decayed_weights, chain, sgd
 
 from src.buffer_selection import reservoir_sampling
 from src.dataloader import CL_DataLoader
-from src.der import train_der
+from src.der import DER_train
 from src.models.resnet18 import singleHeadResNet18
 from src.models.resnet32 import singleHeadResNet32
 from src.models.vit import VisionTransformer
@@ -190,7 +190,7 @@ def main():
             sgd(LR, momentum=MOMENTUM),
         )
 
-        res = train_der(
+        res = DER_train(
             model,
             trainloader,
             testloader,

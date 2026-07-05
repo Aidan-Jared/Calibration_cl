@@ -66,7 +66,7 @@ def der_loss(
                 * jnp.mean(
                     (
                         logits[batch_size : batch_size + old_logits.shape[0] // 2]
-                        - old_logits[: old_logits.shape[0] // 2]
+                        - old_logits
                     )
                     ** 2
                 ),
@@ -117,7 +117,7 @@ def der_loss(
                 * jnp.mean(
                     (
                         logits[batch_size : batch_size + old_logits.shape[0] // 2]
-                        - old_logits[: old_logits.shape[0] // 2]
+                        - old_logits
                     )
                     ** 2
                 ),
@@ -212,7 +212,7 @@ def train_step(
     return model, logits, loss, acc, state, updated, prob_history, opt_state
 
 
-def train_der(
+def DER_train(
     model,
     trainloader: CL_DataLoader,
     testloader: CL_DataLoader,
@@ -246,7 +246,7 @@ def train_der(
             epoch_acc = []
 
             pbar = tqdm(
-                enumerate(trainloader.sample(task, key=subkey)),
+                enumerate(trainloader.sample(task, beta=beta, key=subkey)),
                 total=trainloader.iters(task),
             )  # train_step_jit = train_step
             for step, (x, y, indexes, task_n, old_logits) in pbar:

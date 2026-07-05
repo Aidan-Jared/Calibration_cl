@@ -21,7 +21,7 @@ class CL_DataLoader:
         workers: int = 1,
         buffer: bool = False,
         buffer_size: int = 100,
-        buff_size_mem: int | None = None,
+        replay_size: int | None = None,
         transform: bool = True,
         crop: tuple[int, int] = (32, 32),
         padding: int = 4,
@@ -41,7 +41,7 @@ class CL_DataLoader:
         self.buffer_size: int = buffer_size
         self.seen_examples = 0
 
-        self.buff_size_mem = buff_size_mem if buff_size_mem is not None else batch_size
+        self.buff_size_mem = replay_size if replay_size is not None else batch_size
         self.Transform = transform
         self.crop = crop
         self.padding = padding
@@ -203,7 +203,7 @@ class CL_DataLoader:
 
         return X.astype(self.dtype), y.astype(jnp.int32), class_idx, task, logits
 
-    def sample(self, task_n: int, *, key: PRNGKeyArray):
+    def sample(self, task_n: int, *, beta: float | None, key: PRNGKeyArray):
         task_idx: Array[int] = self.tasks[task_n]
         n: int = jnp.sum(self.class_lengths[task_idx]).item()
         class_idx: Array[int] = self.class_indicies[task_idx].reshape(-1)
@@ -228,26 +228,30 @@ class CL_DataLoader:
 
         device = jax.devices(self.iter_device)[0]
 
+        def get_buffer(filled, key, i):
+            key, subkey = jax.random.split(key)
+            buffer_samples = jax.random.choice(
+                subkey, filled, shape=(self.buff_size_mem,), replace=False
+            )
+
+            idx = jnp.concatenate((class_idx[i], self.buffer_idx[buffer_samples]))
+
+            X = self.all_data[idx]
+
+            y: Array[int] = jnp.concatenate(
+                (labels[i], self.buffer_targets[buffer_samples])
+            )
+            logits = self.buffer_logits[buffer_samples]
+            return X, y, logits, key
+
         def raw_generator():
             nonlocal key
             for i in range(batches):
                 if self.buffer and filled is not None:
-                    key, subkey = jax.random.split(key)
-                    buffer_samples = jax.random.choice(
-                        subkey, filled, shape=(self.buff_size_mem,), replace=True
-                    )
+                    X, y, logits, key = get_buffer(filled, key, i)
 
-                    idx = jnp.concatenate(
-                        (class_idx[i], self.buffer_idx[buffer_samples])
-                    )
-
-                    X = self.all_data[idx]
-
-                    y: Array[int] = jnp.concatenate(
-                        (labels[i], self.buffer_targets[buffer_samples])
-                    )
-                    logits = self.buffer_logits[buffer_samples]
-
+                    if beta is not None and beta > 0:
+                        X, y, _, key = get_buffer(filled, key, i)
                 else:
                     X: Array = self.all_data[class_idx[i]]
                     y: Array[int] = labels[i]

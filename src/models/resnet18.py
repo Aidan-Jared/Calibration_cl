@@ -50,8 +50,8 @@ class BasicBlock(eqx.Module):
     conv2: eqx.nn.Conv2d
     shortcut: list | None
 
-    bn1: eqx.nn.GroupNorm
-    bn2: eqx.nn.GroupNorm
+    bn1: eqx.nn.BatchNorm
+    bn2: eqx.nn.BatchNorm
     dropout: Drop_Path
 
     def __init__(
@@ -86,8 +86,8 @@ class BasicBlock(eqx.Module):
             key=subkey2,
         )
 
-        self.bn1 = eqx.nn.GroupNorm(8, out_chanels)
-        self.bn2 = eqx.nn.GroupNorm(8, out_chanels)
+        self.bn1 = eqx.nn.BatchNorm(out_chanels, axis_name="batch", mode="batch")
+        self.bn2 = eqx.nn.BatchNorm(out_chanels, axis_name="batch", mode="batch")
         self.dropout = Drop_Path(dropout)
 
         if stride != 1 or in_chanels != out_chanels:
@@ -101,7 +101,7 @@ class BasicBlock(eqx.Module):
                     dtype=dtype,
                     key=subkey3,
                 ),
-                eqx.nn.GroupNorm(8, out_chanels),
+                eqx.nn.BatchNorm(out_chanels, axis_name="batch", mode="batch"),
             ]
         else:
             self.shortcut = None
@@ -137,7 +137,7 @@ class BasicBlock(eqx.Module):
 
 class ResNet18(eqx.Module):
     conv1: eqx.nn.Conv2d
-    bn1: eqx.nn.GroupNorm
+    bn1: eqx.nn.BatchNorm
     layer1: eqx.nn.Sequential
     layer2: eqx.nn.Sequential
     layer3: eqx.nn.Sequential
@@ -174,7 +174,7 @@ class ResNet18(eqx.Module):
             dtype=dtype,
             key=subkey1,
         )
-        self.bn1 = eqx.nn.GroupNorm(8, hidden_channels)
+        self.bn1 = eqx.nn.BatchNorm(hidden_channels, axis_name="batch", mode="batch")
 
         self.layer1 = self._make_layer(
             hidden_channels, num_blocks=2, stride=1, dtype=dtype, key=subkey2

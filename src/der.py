@@ -60,6 +60,7 @@ def der_loss(
         or indexes is None
     ):
         loss = jnp.mean(softmax_cross_entropy_with_integer_labels(logits, y))
+        key, subkey = jax.random.split(key)
         x, y, old_logits, has_buffer, key = get_from_buffer(
             buffer_idx,
             buffer_targets,
@@ -67,8 +68,9 @@ def der_loss(
             replay_size,
             has_buffer,
             trainloader,
-            key=key,
+            key=subkey,
         )
+        # jax.debug.breakpoint()
         loss += jax.lax.cond(
             has_buffer,
             lambda: der_alpha
@@ -89,6 +91,7 @@ def der_loss(
         # jax.debug.breakpoint()
 
         if beta != 0:
+            key, subkey = jax.random.split(key)
             x, y, old_logits, has_buffer, key = get_from_buffer(
                 buffer_idx,
                 buffer_targets,
@@ -96,7 +99,7 @@ def der_loss(
                 replay_size,
                 has_buffer,
                 trainloader,
-                key=key,
+                key=subkey,
             )
             loss += jax.lax.cond(
                 has_buffer,
@@ -114,6 +117,7 @@ def der_loss(
                 ),
                 lambda: 0.0,
             )
+            # jax.debug.breakpoint()
             # jax.debug.print("{}", y[batch_size:])
             # jax.debug.print("{}", sloss)
 
@@ -131,6 +135,7 @@ def der_loss(
         )
         loss = jnp.mean(loss)
 
+        key, subkey = jax.random.split(key)
         x, y, old_logits, has_buffer, key = get_from_buffer(
             buffer_idx,
             buffer_targets,
@@ -138,7 +143,7 @@ def der_loss(
             replay_size,
             has_buffer,
             trainloader,
-            key=key,
+            key=subkey,
         )
         loss += jax.lax.cond(
             has_buffer,
@@ -188,6 +193,7 @@ def der_loss(
 
                 return jnp.mean(sloss), prob_history, updated
 
+            key, subkey = jax.random.split(key)
             x, y, old_logits, indexes, has_buffer, key = get_from_buffer(
                 buffer_idx,
                 buffer_targets,
@@ -195,7 +201,7 @@ def der_loss(
                 replay_size,
                 has_buffer,
                 trainloader,
-                key=key,
+                key=subkey,
                 soc=True,
             )
             sloss, prob_history, updated = jax.lax.cond(
@@ -338,6 +344,7 @@ def DER_train(
             epoch_loss = []
             epoch_acc = []
 
+            model = eqx.nn.inference_mode(model, False)
             pbar = tqdm(
                 enumerate(trainloader.sample(task, beta=beta, key=subkey)),
                 total=trainloader.iters(task),

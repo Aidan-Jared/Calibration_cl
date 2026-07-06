@@ -157,7 +157,7 @@ def eval(model, state, tasks, testloader, *, key) -> dict[str, dict[str, float]]
             total=testloader.iters(p_task),
             ncols=75,
         )
-        for step, (x, y, _, _, _) in pbar:
+        for step, (x, y, _, _) in pbar:
             key, subkey = jax.random.split(key)
             loss, acc = loss_fn(model, x, y, state, subkey)
             task_loss.append(loss)

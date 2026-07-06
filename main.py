@@ -134,9 +134,6 @@ def main():
             splits=SPLITS,
             dtype=jnp.float32,
             key=subkey1,
-            buffer=True,
-            buffer_size=args["buffer_size"],
-            replay_size=args["replay_size"],
             transform=args["transform"],
             socrates=soc,
         )
@@ -148,7 +145,6 @@ def main():
             dtype=jnp.float32,
             transform=args["transform"],
             key=subkey1,
-            buffer=False,
         )
 
         trainloader.normilization_values(norm[0], norm[1])
@@ -198,6 +194,8 @@ def main():
             EPOCHS,
             state,
             optim,
+            buffer_size=args["buffer_size"],
+            replay_size=args["replay_size"],
             der_alpha=args["der_alpha"],
             beta=args["der_beta"],
             selection_method=selection_dict[args["selection_method"]],

@@ -1,13 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, PRNGKeyArray
 from torch.utils.data import Dataset
-
-from src.buffer_selection import reservoir_sampling
 
 
 class CL_DataLoader:
@@ -19,9 +16,6 @@ class CL_DataLoader:
         device: str = "cpu",
         iter_device: str = "gpu",
         workers: int = 1,
-        buffer: bool = False,
-        buffer_size: int = 100,
-        replay_size: int | None = None,
         transform: bool = True,
         crop: tuple[int, int] = (32, 32),
         padding: int = 4,
@@ -37,11 +31,7 @@ class CL_DataLoader:
         self.device: str = device
         self.iter_device: str = iter_device
         self.workers: int = workers
-        self.buffer: bool = buffer
-        self.buffer_size: int = buffer_size
-        self.seen_examples = 0
 
-        self.buff_size_mem = replay_size if replay_size is not None else batch_size
         self.Transform = transform
         self.crop = crop
         self.padding = padding
@@ -99,22 +89,6 @@ class CL_DataLoader:
                 key, self.num_classes, (self.num_classes,), replace=False
             ).reshape(self.splits, -1)
             self.tasks = jax.device_put(self.tasks, device)
-
-        if self.buffer:
-            if socrates:
-                num_classes = self.num_classes + 1
-            else:
-                num_classes = self.num_classes
-
-            self.buffer_logits = jnp.empty(
-                (self.buffer_size + 1, num_classes), device=device, dtype=jnp.float32
-            )
-            self.buffer_idx = jnp.full(
-                (self.buffer_size + 1,), -1, device=device, dtype=jnp.int32
-            )
-            self.buffer_targets = jnp.zeros(
-                (self.buffer_size + 1,), device=device, dtype=jnp.uint32
-            )
 
     @staticmethod
     @jax.jit
@@ -182,15 +156,12 @@ class CL_DataLoader:
         self,
         X: Array,
         y: Array,
-        logits: Array | None,
         class_idx: Array,
         task: int,
         device: jax.Device,
         *,
         key,
-    ) -> tuple[Array, Array, Array, int, Array]:
-        if logits is None:
-            logits = jnp.zeros((1, self.num_classes))
+    ) -> tuple[Array, Array, Array, int]:
         if self.Transform:
             X = self.transform_batch(key, X, self.crop, self.padding, self.flip_p)
         X: Array = X.astype(jnp.float32) / 255.0
@@ -198,10 +169,9 @@ class CL_DataLoader:
             X: Array = self._norm(X, self.mean, self.std)
         X: Array = jax.device_put(X, device)
         y: Array = jax.device_put(y, device)
-        logits: Array = jax.device_put(logits, device)
         class_idx: Array = jax.device_put(class_idx, device)
 
-        return X.astype(self.dtype), y.astype(jnp.int32), class_idx, task, logits
+        return X.astype(self.dtype), y.astype(jnp.int32), class_idx, task
 
     def sample(self, task_n: int, *, beta: float | None, key: PRNGKeyArray):
         task_idx: Array[int] = self.tasks[task_n]
@@ -221,50 +191,16 @@ class CL_DataLoader:
         )
         labels = labels[: batches * self.batch_size].reshape(batches, self.batch_size)
 
-        if self.buffer and (task_n > 0 and jnp.any(self.buffer_idx > 0)):
-            filled = int(jnp.sum(self.buffer_idx[:-1] >= 0))
-        else:
-            filled = None
-
         device = jax.devices(self.iter_device)[0]
-
-        def get_buffer(filled, key, i, X: Array | None = None, y: Array | None = None):
-            key, subkey = jax.random.split(key)
-            buffer_samples = jax.random.choice(
-                subkey, filled, shape=(self.buff_size_mem,), replace=False
-            )
-
-            if X is None and y is None:
-                idx = jnp.concatenate((class_idx[i], self.buffer_idx[buffer_samples]))
-                X = self.all_data[idx]
-
-                y: Array[int] = jnp.concatenate(
-                    (labels[i], self.buffer_targets[buffer_samples])
-                )
-                logits = self.buffer_logits[buffer_samples]
-                return X, y, logits, key
-            else:
-                X = jnp.concatenate((X, self.all_data[buffer_samples]))
-                y: Array[int] = jnp.concatenate(
-                    (y, self.buffer_targets[buffer_samples])
-                )
-                return X, y, key
 
         def raw_generator():
             nonlocal key
             for i in range(batches):
-                if self.buffer and filled is not None:
-                    X, y, logits, key = get_buffer(filled, key, i)
-
-                    if beta is not None and beta > 0:
-                        X, y, key = get_buffer(filled, key, i, X=X, y=y)
-                else:
-                    X: Array = self.all_data[class_idx[i]]
-                    y: Array[int] = labels[i]
-                    logits = None
+                X: Array = self.all_data[class_idx[i]]
+                y: Array[int] = labels[i]
                 idx = class_idx[i]
 
-                yield (X, y, logits, idx, task_n)
+                yield (X, y, idx, task_n)
 
         yield from self._prefetch(raw_generator(), device, key=key)
 
@@ -283,43 +219,9 @@ class CL_DataLoader:
                         item[1],
                         item[2],
                         item[3],
-                        item[4],
                         device,
                         key=subkey,
                     )
                 )
             while futures:
                 yield futures.pop(0).result()
-
-    def add_to_buffer(
-        self,
-        sample_idx: Array,
-        labels: Array,
-        logits: Array,
-        selection_method: Callable | None = None,
-        *,
-        key: PRNGKeyArray,
-    ):
-        if not self.buffer:
-            return
-        key, subkey = jax.random.split(key)
-
-        device: jax.Device = jax.devices(self.device)[0]
-        sample_idx: Array = jax.device_put(sample_idx, device)
-        labels: Array = jax.device_put(labels, device)
-        logits: Array = jax.device_put(logits, device)
-        if selection_method is None:
-            selection_method = reservoir_sampling
-        self.buffer_idx, self.buffer_targets, self.buffer_logits, self.seen_examples = (
-            selection_method(
-                sample_idx,
-                labels,
-                logits,
-                self.buffer_idx,
-                self.buffer_targets,
-                self.buffer_logits,
-                self.seen_examples,
-                device=device,
-                key=key,
-            )
-        )

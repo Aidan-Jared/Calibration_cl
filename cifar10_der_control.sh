@@ -9,16 +9,16 @@ uv run main.py \
   --lr 3e-3\
   --momentum 0.9\
   --batch-size 32\
-  --task-epochs 30\
+  --task-epochs 5\
   --transform "True"\
   --dropout 0.0\
   --data_set "CIFAR10"\
   --task-splits 5\
-  --model "singleHeadResNet18"\
+  --model "singleHeadResNet32"\
   --norm "[(0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)]"\
   --method "DER"\
   --der-alpha .1\
   --der-beta .5\
-  --buffer-size 200\
+  --buffer-size 600\
   --replay-size 32\
   --task-shuffle "False"

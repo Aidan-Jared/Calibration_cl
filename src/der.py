@@ -52,15 +52,17 @@ def der_loss(
 
     acc = jnp.mean(jnp.argmax(logits, axis=1) == y)
 
-    if (
-        prob_history is None
-        or updated is None
-        or soc_alpha is None
-        or gamma is None
-        or indexes is None
+    key, subkey = jax.random.split(key)
+
+    def _der_loss(
+        key,
+        buffer_idx,
+        buffer_targets,
+        buffer_logits,
+        replay_size,
+        has_buffer,
+        trainloader,
     ):
-        loss = jnp.mean(softmax_cross_entropy_with_integer_labels(logits, y))
-        key, subkey = jax.random.split(key)
         x, y, old_logits, has_buffer, key = get_from_buffer(
             buffer_idx,
             buffer_targets,
@@ -71,7 +73,7 @@ def der_loss(
             key=subkey,
         )
         # jax.debug.breakpoint()
-        loss += jax.lax.cond(
+        loss = jax.lax.cond(
             has_buffer,
             lambda: der_alpha
             * jnp.mean(
@@ -88,8 +90,30 @@ def der_loss(
             ),
             lambda: 0.0,
         )
+        return loss
+
+    if (
+        prob_history is None
+        or updated is None
+        or soc_alpha is None
+        or gamma is None
+        or indexes is None
+    ):
+        loss = jnp.mean(softmax_cross_entropy_with_integer_labels(logits, y))
+
         # jax.debug.breakpoint()
 
+        loss += _der_loss(
+            key,
+            buffer_idx,
+            buffer_targets,
+            buffer_logits,
+            replay_size,
+            has_buffer,
+            trainloader,
+        )
+        # jax.debug.print("{}", "sampled from first")
+        # jax.debug.breakpoint()
         if beta != 0:
             key, subkey = jax.random.split(key)
             x, y, old_logits, has_buffer, key = get_from_buffer(
@@ -101,6 +125,7 @@ def der_loss(
                 trainloader,
                 key=subkey,
             )
+            # jax.debug.print("{}", "sampled from second")
             loss += jax.lax.cond(
                 has_buffer,
                 lambda: beta
@@ -135,32 +160,14 @@ def der_loss(
         )
         loss = jnp.mean(loss)
 
-        key, subkey = jax.random.split(key)
-        x, y, old_logits, has_buffer, key = get_from_buffer(
+        loss += _der_loss(
+            key,
             buffer_idx,
             buffer_targets,
             buffer_logits,
             replay_size,
             has_buffer,
             trainloader,
-            key=subkey,
-        )
-        loss += jax.lax.cond(
-            has_buffer,
-            lambda: der_alpha
-            * jnp.mean(
-                (
-                    jax.vmap(
-                        model_forward,
-                        in_axes=(None, 0, None, 0),
-                        out_axes=(0, None),
-                        axis_name="batch",
-                    )(Model, x, state, keys)[0]
-                    - old_logits
-                )
-                ** 2
-            ),
-            lambda: 0.0,
         )
         prob_history = prob_history.at[indexes].set(up_prob_history)
         updated = updated.at[indexes].set(1)
@@ -375,8 +382,8 @@ def DER_train(
                     buffer_targets,
                     buffer_logits,
                     replay_size,
-                    has_buffer,
                     seen_examples,
+                    has_buffer,
                     batch_size,
                     optim,
                     opt_state,

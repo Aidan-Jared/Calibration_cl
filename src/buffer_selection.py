@@ -78,7 +78,8 @@ def get_from_buffer(
 
     probs: Array = valid_mask.astype(jnp.float32)
     probs: Array = probs / jnp.maximum(jnp.sum(probs), 1.0)
-
+    # jax.debug.print("{}", probs)
+    # jax.debug.breakpoint()
     key, subkey1, subkey2 = jax.random.split(key, 3)
     buffer_samples = jax.random.choice(
         subkey1,
@@ -88,9 +89,15 @@ def get_from_buffer(
         p=probs,
     )
 
+    # jax.debug.print("{}", buffer_samples)
+    # jax.debug.print("{}", key)
     idx = buffer_idx[buffer_samples]
     X = trainloader.all_data[idx]
+
+    # jax.debug.print("{}", X)
+    # jax.debug.breakpoint()
     y = buffer_targets[buffer_samples]
+    # jax.debug.print("{}", y)
     logits = buffer_logits[buffer_samples]
 
     device = jax.devices(trainloader.iter_device)[0]
@@ -131,8 +138,9 @@ def reservoir_sampling(
     def rand_selection(key, n, i):
         rand_idx = jax.random.randint(key, (), 0, n, dtype=jnp.int32)
         replace, choice = jax.lax.cond(
-            rand_idx < buffer_size, lambda: (rand_idx, i), lambda: (-1, -1)
+            rand_idx < buffer_size, lambda: (rand_idx, i), lambda: (buffer_size + 1, i)
         )
+
         return replace, choice
 
     def add_to_buffer(batch_idx, seen_examples, key):
@@ -152,13 +160,18 @@ def reservoir_sampling(
         batch_idxes, seen_examples, keys
     )
 
+    # jax.debug.print("replace {}", replace)
+    # jax.debug.print("choices {}", choices)
+
     seen_examples += batch_size
 
     choices = jnp.array(choices, device=device, dtype=jnp.int32)
     replace = jnp.array(replace, device=device, dtype=jnp.int32)
-    buffer_idx = buffer_idx.at[replace].set(sample_idx[choices])
-    buffer_targets = buffer_targets.at[replace].set(labels[choices].astype(jnp.uint32))
-    buffer_logits = buffer_logits.at[replace].set(logits[choices])
+    buffer_idx = buffer_idx.at[replace].set(sample_idx[choices], mode="drop")
+    buffer_targets = buffer_targets.at[replace].set(
+        labels[choices].astype(jnp.uint32), mode="drop"
+    )
+    buffer_logits = buffer_logits.at[replace].set(logits[choices], mode="drop")
 
     return buffer_idx, buffer_targets, buffer_logits, seen_examples
 

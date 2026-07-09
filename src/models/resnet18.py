@@ -200,9 +200,10 @@ class ResNet18(eqx.Module):
         layers = []
         for stride in strides:
             key, subkey = jax.random.split(key)
+            in_channels = self.hidden_channels
             layers.append(
                 BasicBlock(
-                    self.hidden_channels,
+                    in_channels,
                     out_channels,
                     stride,
                     dropout=self.dropout,

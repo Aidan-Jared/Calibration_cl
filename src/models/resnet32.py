@@ -76,8 +76,8 @@ class BasicBlock(eqx.Module):
         key: PRNGKeyArray | None = None,
     ) -> tuple[Array, eqx.nn._stateful.State]:
         out = self.conv1(x)
-        out = jax.nn.relu(out)
         out, state = self.bn1(out, state)
+        out = jax.nn.relu(out)
 
         out = self.conv2(out)
         out, state = self.bn2(out, state)
@@ -103,7 +103,7 @@ class BasicBlock(eqx.Module):
 
         out = out + identity
 
-        out = jax.nn.elu(out)
+        out = jax.nn.relu(out)
         return out, state
 
 
@@ -190,7 +190,7 @@ class ResNet32(eqx.Module):
     ) -> tuple[Array, eqx.nn._stateful.State]:
         out = self.conv1(x)
         out, state = self.bn1(out, state)
-        out = jax.nn.elu(out)
+        out = jax.nn.relu(out)
 
         for block in self.layer1:
             key, subkey = jax.random.split(key)

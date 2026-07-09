@@ -89,15 +89,10 @@ def get_from_buffer(
         p=probs,
     )
 
-    # jax.debug.print("{}", buffer_samples)
-    # jax.debug.print("{}", key)
     idx = buffer_idx[buffer_samples]
     X = trainloader.all_data[idx]
 
-    # jax.debug.print("{}", X)
-    # jax.debug.breakpoint()
     y = buffer_targets[buffer_samples]
-    # jax.debug.print("{}", y)
     logits = buffer_logits[buffer_samples]
 
     device = jax.devices(trainloader.iter_device)[0]

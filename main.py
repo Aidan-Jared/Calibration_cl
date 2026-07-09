@@ -50,7 +50,7 @@ parser.add_argument("--batch-size", type=int, default=32)
 
 parser.add_argument("--dropout", type=float, default=0.0)
 parser.add_argument("--transform", type=parse_bool, default="True")
-parser.add_argument("--task-shuffle", type=parse_bool, default=False)
+parser.add_argument("--task-shuffle", type=parse_bool, default="False")
 
 # dataset parameters
 parser.add_argument("--data_set", type=str, default="CIFAR10")

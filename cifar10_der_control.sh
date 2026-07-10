@@ -9,7 +9,7 @@ uv run main.py \
   --lr 3e-2\
   --momentum 0.9\
   --batch-size 32\
-  --task-epochs 10\
+  --task-epochs 5\
   --transform "True"\
   --dropout 0.0\
   --data_set "CIFAR10"\

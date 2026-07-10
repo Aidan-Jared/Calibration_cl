@@ -180,10 +180,9 @@ class CL_DataLoader:
         labels: Array[int] = np.repeat(task_idx, self.class_lengths[task_idx])
         key, subkey = jax.random.split(key)
 
-        if key is not None:
-            shuffle = jax.random.permutation(key=key, x=n)
-            class_idx: Array[int] = class_idx[shuffle]
-            labels: Array[int] = labels[shuffle]
+        shuffle = jax.random.permutation(key=subkey, x=n)
+        class_idx = class_idx[shuffle]
+        labels = labels[shuffle]
 
         batches = n // self.batch_size
         class_idx = class_idx[: batches * self.batch_size].reshape(
@@ -196,9 +195,9 @@ class CL_DataLoader:
         def raw_generator():
             nonlocal key
             for i in range(batches):
-                X: Array = self.all_data[class_idx[i]]
-                y: Array[int] = labels[i]
                 idx = class_idx[i]
+                X: Array = self.all_data[idx]
+                y: Array[int] = labels[i]
 
                 yield (X, y, idx, task_n)
 

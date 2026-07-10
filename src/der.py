@@ -279,6 +279,62 @@ def train_step(
         subkey1,
         subkey2,
     ) = jax.random.split(key)
+
+    # 2. Define a wrapper function that recombines them so JAX only traces the arrays
+    # def trace_wrapper(
+    #     dyn_model,
+    #     x,
+    #     y,
+    #     state,
+    #     buffer_idx,
+    #     buffer_targets,
+    #     buffer_logits,
+    #     prob_history,
+    #     indexes,
+    #     updated,
+    #     key,
+    # ):
+    #     full_model = eqx.combine(dyn_model, static_model)
+    #     loss_and_grad_fn = eqx.filter_value_and_grad(der_loss, has_aux=True)
+    #     return loss_and_grad_fn(
+    #         full_model,
+    #         x,
+    #         y,
+    #         state,
+    #         trainloader,
+    #         buffer_idx,
+    #         buffer_targets,
+    #         buffer_logits,
+    #         replay_size,
+    #         has_buffer,
+    #         batch_size,
+    #         der_alpha,
+    #         beta,
+    #         prob_history,
+    #         indexes,
+    #         updated,
+    #         gamma,
+    #         soc_alpha,
+    #         key=key,
+    #     )
+
+    # # 3. Print the Jaxpr safely using only the dynamic/array arguments
+    # lowered = jax.make_jaxpr(trace_wrapper)(
+    #     dynamic_model,
+    #     x,
+    #     y,
+    #     state,
+    #     buffer_idx,
+    #     buffer_targets,
+    #     buffer_logits,
+    #     prob_history,
+    #     indexes,
+    #     updated,
+    #     subkey1,
+    # )
+    # jax.debug.print("my thing: {}", lowered)
+
+    # jax.debug.breakpoint()
     (loss, (logits, acc, state, updated, prob_history)), grads = (
         eqx.filter_value_and_grad(der_loss, has_aux=True)(
             model,
@@ -302,6 +358,7 @@ def train_step(
             key=subkey1,
         )
     )
+    # jax.debug.breakpoint()
     updates, opt_state = optim.update(grads, opt_state, eqx.filter(model, eqx.is_array))
 
     buffer_idx, buffer_targets, buffer_logits, seen_examples = add_to_buffer(

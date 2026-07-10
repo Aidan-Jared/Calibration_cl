@@ -2,6 +2,8 @@ import argparse
 import ast
 import os
 
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,8 +17,6 @@ from src.models.resnet18 import singleHeadResNet18
 from src.models.resnet32 import singleHeadResNet32
 from src.models.vit import VisionTransformer
 from src.utils import load_data
-
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
 def parse_list(arg):
@@ -143,7 +143,7 @@ def main():
             batch_size=BATCH,
             splits=SPLITS,
             dtype=jnp.float32,
-            transform=args["transform"],
+            transform=False,
             key=subkey1,
         )
 
@@ -158,6 +158,7 @@ def main():
 
         model, state = eqx.nn.make_with_state(model_dict[args["model"]])(
             trainloader.all_data[0].shape[0],
+            hidden_channels=20,
             num_classes=num_classes,
             num_splits=SPLITS,
             dropout=args["dropout"],

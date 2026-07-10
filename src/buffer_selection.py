@@ -78,8 +78,6 @@ def get_from_buffer(
 
     probs: Array = valid_mask.astype(jnp.float32)
     probs: Array = probs / jnp.maximum(jnp.sum(probs), 1.0)
-    # jax.debug.print("{}", probs)
-    # jax.debug.breakpoint()
     key, subkey1, subkey2 = jax.random.split(key, 3)
     buffer_samples = jax.random.choice(
         subkey1,
@@ -91,7 +89,7 @@ def get_from_buffer(
 
     idx = buffer_idx[buffer_samples]
     X = trainloader.all_data[idx]
-
+    X: Array = X.astype(jnp.float32) / 255.0
     y = buffer_targets[buffer_samples]
     logits = buffer_logits[buffer_samples]
 
@@ -100,12 +98,11 @@ def get_from_buffer(
     if hasattr(trainloader, "mean") and hasattr(trainloader, "std"):
         X: Array = trainloader._norm(X, trainloader.mean, trainloader.std)
 
-    X = trainloader.transform_batch(
-        subkey2, X, trainloader.crop, trainloader.padding, trainloader.flip_p
-    )
     X: Array = jax.device_put(X, device)
     y: Array = jax.device_put(y, device)
     logits: Array = jax.device_put(logits, device)
+    # jax.debug.print("{}", logits)
+    # jax.debug.breakpoint()
     if not soc:
         return X, y, logits, has_buffer, key
     else:
@@ -131,14 +128,14 @@ def reservoir_sampling(
     batch_idxes = jnp.arange(0, batch_size, dtype=jnp.int32)
 
     def rand_selection(key, n, i):
-        rand_idx = jax.random.randint(key, (), 0, n, dtype=jnp.int32)
+        rand_idx = jax.random.randint(key, (), 0, n + 1, dtype=jnp.int32)
         replace, choice = jax.lax.cond(
             rand_idx < buffer_size, lambda: (rand_idx, i), lambda: (buffer_size + 1, i)
         )
 
         return replace, choice
 
-    def add_to_buffer(batch_idx, seen_examples, key):
+    def _replace(batch_idx, seen_examples, key):
         n = seen_examples + batch_idx
         replace, choice = jax.lax.cond(
             n < buffer_size,
@@ -151,7 +148,7 @@ def reservoir_sampling(
         return replace, choice
 
     keys = jax.random.split(key, batch_size)
-    replace, choices = jax.vmap(add_to_buffer, in_axes=(0, None, 0))(
+    replace, choices = jax.vmap(_replace, in_axes=(0, None, 0))(
         batch_idxes, seen_examples, keys
     )
 

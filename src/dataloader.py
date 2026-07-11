@@ -212,7 +212,6 @@ class CL_DataLoader:
             for item in generator:
                 if key is not None:
                     key, subkey = jax.random.split(key)
-                    print(key)
                 else:
                     subkey = None
                 futures.append(

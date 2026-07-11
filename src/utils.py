@@ -140,7 +140,6 @@ def eval(model, state, tasks, testloader, *, key) -> dict[str, dict[str, float]]
             out_axes=(0, None),
             axis_name="batch",
         )(model, x, state, key)
-        jax.debug.print("{}", y)
 
         loss = softmax_cross_entropy_with_integer_labels(logits, y)
         acc = jnp.mean(jnp.argmax(logits, axis=1) == y)

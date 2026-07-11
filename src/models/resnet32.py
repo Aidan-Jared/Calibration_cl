@@ -16,7 +16,7 @@ class BasicBlock(eqx.Module):
 
     bn1: eqx.nn.BatchNorm
     bn2: eqx.nn.BatchNorm
-    dropout: Drop_Path
+    # dropout: Drop_Path
 
     def __init__(
         self,
@@ -36,6 +36,7 @@ class BasicBlock(eqx.Module):
             stride=stride,
             padding=1,
             dtype=dtype,
+            use_bias=False,
             key=subkey1,
         )
         self.conv2 = eqx.nn.Conv2d(
@@ -45,12 +46,13 @@ class BasicBlock(eqx.Module):
             stride=1,
             padding=1,
             dtype=dtype,
+            use_bias=False,
             key=subkey2,
         )
 
         self.bn1 = eqx.nn.BatchNorm(out_chanels, axis_name="batch", mode="batch")
         self.bn2 = eqx.nn.BatchNorm(out_chanels, axis_name="batch", mode="batch")
-        self.dropout = Drop_Path(dropout)
+        # self.dropout = Drop_Path(dropout)
 
         if stride != 1 or in_chanels != out_chanels:
             self.shortcut = [
@@ -83,7 +85,7 @@ class BasicBlock(eqx.Module):
         out, state = self.bn2(out, state)
         # out = jax.nn.relu(out)
 
-        out = self.dropout(out, key=key)
+        # out = self.dropout(out, key=key)
 
         if self.shortcut is not None:
             identity = self.shortcut[0](x)

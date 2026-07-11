@@ -158,7 +158,7 @@ def main():
 
         model, state = eqx.nn.make_with_state(model_dict[args["model"]])(
             trainloader.all_data[0].shape[0],
-            hidden_channels=20,
+            # hidden_channels=20,
             num_classes=num_classes,
             num_splits=SPLITS,
             dropout=args["dropout"],

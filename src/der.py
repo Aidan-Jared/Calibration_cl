@@ -40,6 +40,7 @@ def der_loss(
     *,
     key: PRNGKeyArray,
 ):
+    params, static = eqx.partition(Model, eqx.is_array)
     key, *keys = jax.random.split(key, x.shape[0] + 1)
     keys = jnp.array(keys)
 
@@ -56,6 +57,7 @@ def der_loss(
     keys = jnp.array(keys)
 
     def _der_loss(
+        Model,
         key,
         buffer_idx,
         buffer_targets,
@@ -63,11 +65,9 @@ def der_loss(
         replay_size,
         has_buffer,
         trainloader,
-        Model,
         state,
         keys,
     ):
-        params, static = eqx.partition(Model, eqx.is_array)
         x, y, old_logits, has_buffer, key = get_from_buffer(
             buffer_idx,
             buffer_targets,
@@ -79,29 +79,29 @@ def der_loss(
         )
 
         def true_fn(operands):
-            M, x_b, s, k, target_logits = operands
-            M = eqx.combine(M, static)
-            preds = jax.vmap(
+            p, x_b, s, k, target_logits = operands
+            M = eqx.combine(p, static)
+            preds, s = jax.vmap(
                 model_forward,
                 in_axes=(None, 0, None, 0),
                 out_axes=(0, None),
                 axis_name="batch",
-            )(M, x_b, s, k)[0]
-            return der_alpha * jnp.mean((preds - target_logits) ** 2)
+            )(M, x_b, s, k)
+            return der_alpha * jnp.mean((preds - target_logits) ** 2), s
 
-        loss = jax.lax.cond(
+        loss, state = jax.lax.cond(
             has_buffer,
             true_fn,
-            lambda operands: 0.0,
+            lambda operands: (0.0, state),
             operand=(
-                params,
+                Model,
                 x,
                 state,
                 keys,
                 old_logits,
             ),
         )
-        return loss
+        return loss, state
 
     if (
         prob_history is None
@@ -115,7 +115,8 @@ def der_loss(
         # jax.debug.breakpoint()
 
         key, subkey = jax.random.split(key)
-        loss += _der_loss(
+        aloss, state = _der_loss(
+            params,
             subkey,
             buffer_idx,
             buffer_targets,
@@ -123,11 +124,10 @@ def der_loss(
             replay_size,
             has_buffer,
             trainloader,
-            Model,
             state,
             keys,
         )
-        # jax.debug.breakpoint()
+        floss = loss + aloss
         if beta != 0:
             key, subkey = jax.random.split(key)
             x, y, old_logits, has_buffer, key = get_from_buffer(
@@ -142,34 +142,36 @@ def der_loss(
 
             key, *keys_list = jax.random.split(key, x.shape[0] + 1)
             keys = jnp.array(keys_list)
-            params, static = eqx.partition(Model, eqx.is_array)
 
             def beta_true_fn(operands):
-                M, x_b, y_b, k_b = operands
-                M = eqx.combine(M, static)
-                preds = jax.vmap(
+                p, x_b, y_b, s, k_b = operands
+                M = eqx.combine(p, static)
+                preds, s = jax.vmap(
                     model_forward,
                     in_axes=(None, 0, None, 0),
                     out_axes=(0, None),
                     axis_name="batch",
-                )(M, x_b, state, k_b)[0]
+                )(M, x_b, s, k_b)
 
+                # jax.debug.breakpoint()
                 return beta * jnp.mean(
                     softmax_cross_entropy_with_integer_labels(preds, y_b)
-                )
+                ), s
 
-            loss += jax.lax.cond(
+            bloss, state = jax.lax.cond(
                 has_buffer,
                 beta_true_fn,
-                lambda operands: 0.0,
+                lambda operands: (0.0, state),
                 operand=(
                     params,
                     x,
                     y,
+                    state,
                     keys,
                 ),
             )
-        return loss, (logits, acc, state, None, None)  # typing: ignore
+            floss += bloss
+        return floss, (logits, acc, state, None, None)  # typing: ignore
     else:
         loss, up_prob_history = jax.vmap(
             socrates_loss, in_axes=(0, 0, 0, 0, None, None)

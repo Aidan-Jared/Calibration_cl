@@ -167,11 +167,14 @@ class CL_DataLoader:
         X: Array = X.astype(jnp.float32) / 255.0
         if hasattr(self, "mean") and hasattr(self, "std"):
             X: Array = self._norm(X, self.mean, self.std)
-        X: Array = jax.device_put(X, device)
-        y: Array = jax.device_put(y, device)
-        class_idx: Array = jax.device_put(class_idx, device)
-
-        return X.astype(self.dtype), y.astype(jnp.int32), class_idx, task
+        X: Array = X.astype(self.dtype)
+        y: Array = y.astype(jnp.int32)
+        return (
+            jax.device_put(X, device),
+            jax.device_put(y, device),
+            jax.device_put(class_idx, device),
+            task,
+        )
 
     def sample(self, task_n: int, *, beta: float | None, key: PRNGKeyArray):
         task_idx: Array[int] = self.tasks[task_n]
@@ -209,6 +212,7 @@ class CL_DataLoader:
             for item in generator:
                 if key is not None:
                     key, subkey = jax.random.split(key)
+                    print(key)
                 else:
                     subkey = None
                 futures.append(

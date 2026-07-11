@@ -78,9 +78,9 @@ def get_from_buffer(
 
     probs: Array = valid_mask.astype(jnp.float32)
     probs: Array = probs / jnp.maximum(jnp.sum(probs), 1.0)
-    key, subkey1, subkey2 = jax.random.split(key, 3)
+    key, subkey = jax.random.split(key)
     buffer_samples = jax.random.choice(
-        subkey1,
+        subkey,
         buffer_idx.shape[0],
         shape=(replay_size,),
         replace=False,
@@ -89,24 +89,37 @@ def get_from_buffer(
 
     idx = buffer_idx[buffer_samples]
     X = trainloader.all_data[idx]
-    X: Array = X.astype(jnp.float32) / 255.0
     y = buffer_targets[buffer_samples]
     logits = buffer_logits[buffer_samples]
 
     device = jax.devices(trainloader.iter_device)[0]
 
+    if trainloader.Transform:
+        key, subkey = jax.random.split(key)
+        X = trainloader.transform_batch(
+            subkey, X, trainloader.crop, trainloader.padding, trainloader.flip_p
+        )
+
+    X: Array = X.astype(jnp.float32) / 255.0
     if hasattr(trainloader, "mean") and hasattr(trainloader, "std"):
         X: Array = trainloader._norm(X, trainloader.mean, trainloader.std)
 
-    X: Array = jax.device_put(X, device)
-    y: Array = jax.device_put(y, device)
-    logits: Array = jax.device_put(logits, device)
+    X: Array = jax.lax.stop_gradient(jax.device_put(X, device))
+    y: Array = jax.lax.stop_gradient(jax.device_put(y, device))
+    logits: Array = jax.lax.stop_gradient(jax.device_put(logits, device))
     # jax.debug.print("{}", logits)
     # jax.debug.breakpoint()
     if not soc:
-        return X, y, logits, has_buffer, key
+        return X, y, logits, jax.lax.stop_gradient(has_buffer), key
     else:
-        return X, y, logits, buffer_samples, has_buffer, key
+        return (
+            X,
+            y,
+            logits,
+            jax.lax.stop_gradient(buffer_samples),
+            jax.lax.stop_gradient(has_buffer),
+            key,
+        )
 
 
 @jax.jit(static_argnames=("device",))

@@ -7,9 +7,9 @@ uv run main.py \
   --seed 42\
   --model-runs 5\
   --lr 3e-2\
-  --momentum 0.9\
+  --momentum 0.0\
   --batch-size 32\
-  --task-epochs 5\
+  --task-epochs 1\
   --transform "True"\
   --dropout 0.0\
   --data_set "CIFAR10"\

@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from src.dataloader import CL_DataLoader
 from src.buffer_selection import make_buffer, add_to_buffer, get_from_buffer
-from src.socrates_loss import socrates_loss
+from src.calibration.socrates_loss import socrates_loss
 from src.utils import eval, model_forward
 
 
@@ -53,20 +53,17 @@ def der_loss(
 
     acc = jnp.mean(jnp.argmax(logits, axis=1) == y)
 
-    key, *keys = jax.random.split(key, x.shape[0] + 1)
-    keys = jnp.array(keys)
-
     def _der_loss(
         Model,
-        key,
+        state,
         buffer_idx,
         buffer_targets,
         buffer_logits,
         replay_size,
         has_buffer,
         trainloader,
-        state,
-        keys,
+        *,
+        key,
     ):
         x, y, old_logits, has_buffer, key = get_from_buffer(
             buffer_idx,
@@ -78,9 +75,10 @@ def der_loss(
             key=key,
         )
 
-        def true_fn(operands):
+        def alpha_true_fn(operands):
             p, x_b, s, k, target_logits = operands
             M = eqx.combine(p, static)
+            k = jax.random.split(k, x.shape[0])
             preds, s = jax.vmap(
                 model_forward,
                 in_axes=(None, 0, None, 0),
@@ -91,13 +89,13 @@ def der_loss(
 
         loss, state = jax.lax.cond(
             has_buffer,
-            true_fn,
+            alpha_true_fn,
             lambda operands: (0.0, state),
             operand=(
                 Model,
                 x,
                 state,
-                keys,
+                key,
                 old_logits,
             ),
         )
@@ -117,19 +115,18 @@ def der_loss(
         key, subkey = jax.random.split(key)
         aloss, state = _der_loss(
             params,
-            subkey,
+            state,
             buffer_idx,
             buffer_targets,
             buffer_logits,
             replay_size,
             has_buffer,
             trainloader,
-            state,
-            keys,
+            key=subkey,
         )
         floss = loss + aloss
         if beta != 0:
-            key, subkey = jax.random.split(key)
+            key, subkey1, subkey2 = jax.random.split(key, 3)
             x, y, old_logits, has_buffer, key = get_from_buffer(
                 buffer_idx,
                 buffer_targets,
@@ -137,15 +134,13 @@ def der_loss(
                 replay_size,
                 has_buffer,
                 trainloader,
-                key=subkey,
+                key=subkey1,
             )
-
-            key, *keys_list = jax.random.split(key, x.shape[0] + 1)
-            keys = jnp.array(keys_list)
 
             def beta_true_fn(operands):
                 p, x_b, y_b, s, k_b = operands
                 M = eqx.combine(p, static)
+                k_b = jax.random.split(k_b, x.shape[0])
                 preds, s = jax.vmap(
                     model_forward,
                     in_axes=(None, 0, None, 0),
@@ -153,7 +148,6 @@ def der_loss(
                     axis_name="batch",
                 )(M, x_b, s, k_b)
 
-                # jax.debug.breakpoint()
                 return beta * jnp.mean(
                     softmax_cross_entropy_with_integer_labels(preds, y_b)
                 ), s
@@ -167,7 +161,7 @@ def der_loss(
                     x,
                     y,
                     state,
-                    keys,
+                    subkey2,
                 ),
             )
             floss += bloss
@@ -185,50 +179,51 @@ def der_loss(
         )
         loss = jnp.mean(loss)
 
-        loss += _der_loss(
-            key,
+        key, subkey = jax.random.split(key)
+        loss, state = _der_loss(
+            Model,
+            state,
             buffer_idx,
             buffer_targets,
             buffer_logits,
             replay_size,
             has_buffer,
             trainloader,
-            Model,
-            state,
-            keys,
+            key=subkey,
         )
         prob_history = prob_history.at[indexes].set(up_prob_history)
         updated = updated.at[indexes].set(1)
 
         if beta != 0:
+            key, subkey1, subkey2 = jax.random.split(key, 3)
 
-            def socrates_loss_with_old_logits(
-                x, y, state, prob_history, indexes, updated, gamma, soc_alpha
-            ):
-                logits = jax.vmap(
+            def socrates_loss_with_old_logits(operands):
+                p, x_s, y_s, s, k, p_h, i, u, g, s_a = operands
+                p = eqx.combine(p, static)
+                k = jax.random.split(k, x_s.shape[0])
+                logits, s = jax.vmap(
                     model_forward,
                     in_axes=(None, 0, None, 0),
                     out_axes=(0, None),
                     axis_name="batch",
-                )(Model, x, state, keys)[0]
+                )(p, x_s, s, k)
 
                 sloss, up_prob_history = jax.vmap(
                     socrates_loss, in_axes=(0, 0, 0, 0, None, None)
                 )(
                     logits,
-                    prob_history[indexes],
-                    y,
-                    updated[indexes],
-                    gamma,
-                    soc_alpha,
+                    p_h[i],
+                    y_s,
+                    u[i],
+                    g,
+                    s_a,
                 )
 
-                prob_history = prob_history.at[indexes].set(up_prob_history)
-                updated = updated.at[indexes].set(1)
+                p_h = p_h.at[i].set(up_prob_history)
+                u = u.at[i].set(1)
 
-                return jnp.mean(sloss), prob_history, updated
+                return jnp.mean(sloss), s, p_h, u
 
-            key, subkey = jax.random.split(key)
             x, y, old_logits, indexes, has_buffer, key = get_from_buffer(
                 buffer_idx,
                 buffer_targets,
@@ -236,15 +231,25 @@ def der_loss(
                 replay_size,
                 has_buffer,
                 trainloader,
-                key=subkey,
+                key=subkey1,
                 soc=True,
             )
-            sloss, prob_history, updated = jax.lax.cond(
+            sloss, state, prob_history, updated = jax.lax.cond(
                 has_buffer,
-                lambda: socrates_loss_with_old_logits(
-                    x, y, state, prob_history, indexes, updated, gamma, soc_alpha
+                socrates_loss_with_old_logits,
+                lambda: (jnp.array(0.0), state, prob_history, updated),
+                operands=(
+                    params,
+                    x,
+                    y,
+                    state,
+                    key,
+                    prob_history,
+                    indexes,
+                    updated,
+                    gamma,
+                    soc_alpha,
                 ),
-                lambda: (jnp.array(0.0), prob_history, updated),
             )
             loss = loss + beta * sloss
 

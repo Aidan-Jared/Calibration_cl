@@ -181,6 +181,65 @@ def reservoir_sampling(
     return buffer_idx, buffer_targets, buffer_logits, seen_examples
 
 
+@jax.jit(static_argnames=("device",))
+def xder_sampling(
+    sample_idx: Array,
+    labels: Array,
+    logits: Array,
+    buffer_idx: Array,
+    buffer_targets: Array,
+    buffer_logits: Array,
+    seen_examples: int,
+    *,
+    device,
+    key: PRNGKeyArray,
+):
+    batch_size = sample_idx.shape[0]
+    buffer_size = buffer_idx.shape[0]
+
+    batch_idxes = jnp.arange(0, batch_size, dtype=jnp.int32)
+
+    def rand_selection(key, n, i):
+        rand_idx = jax.random.randint(key, (), 0, n + 1, dtype=jnp.int32)
+        replace, choice = jax.lax.cond(
+            rand_idx < buffer_size, lambda: (rand_idx, i), lambda: (buffer_size + 1, i)
+        )
+
+        return replace, choice
+
+    def _replace(batch_idx, seen_examples, key):
+        n = seen_examples + batch_idx
+        replace, choice = jax.lax.cond(
+            n < buffer_size,
+            lambda k, n, i: (n, i),
+            lambda k, n, i: rand_selection(k, n, i),
+            key,
+            n,
+            batch_idx,
+        )
+        return replace, choice
+
+    keys = jax.random.split(key, batch_size)
+    replace, choices = jax.vmap(_replace, in_axes=(0, None, 0))(
+        batch_idxes, seen_examples, keys
+    )
+
+    # jax.debug.print("replace {}", replace)
+    # jax.debug.print("choices {}", choices)
+
+    seen_examples += batch_size
+
+    choices = jnp.array(choices, device=device, dtype=jnp.int32)
+    replace = jnp.array(replace, device=device, dtype=jnp.int32)
+    buffer_idx = buffer_idx.at[replace].set(sample_idx[choices], mode="drop")
+    buffer_targets = buffer_targets.at[replace].set(
+        labels[choices].astype(jnp.uint32), mode="drop"
+    )
+    buffer_logits = buffer_logits.at[replace].set(logits[choices], mode="drop")
+
+    return buffer_idx, buffer_targets, buffer_logits, seen_examples
+
+
 #  not implemented yet
 def calibration_balanced_class_selection(
     dataloaderh,

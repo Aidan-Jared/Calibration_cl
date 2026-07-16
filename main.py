@@ -211,7 +211,8 @@ def main():
 
         df = pd.concat([df, pd.DataFrame(results)])
 
-    df.to_parquet("Runs/test_control.parquet")
+    path = f"Runs/{args['loss']}_{args['data_set']}"
+    df.to_parquet(path)
 
 
 if __name__ == "__main__":

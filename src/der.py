@@ -15,6 +15,7 @@ from tqdm import tqdm
 from src.dataloader import CL_DataLoader
 from src.buffer_selection import make_buffer, add_to_buffer, get_from_buffer
 from src.calibration.socrates_loss import socrates_loss
+from src.calibration.utils import ece
 from src.utils import eval, model_forward
 
 

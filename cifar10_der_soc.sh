@@ -8,8 +8,8 @@ uv run main.py \
   --model-runs 5\
   --lr 5e-4\
   --batch-size 32\
-  --task-epochs 5\
-  --dropout 0.1\
+  --task-epochs 50\
+  --dropout 0.0\
   --data_set "CIFAR10"\
   --task-splits 5\
   --model "singleHeadResNet32"\

@@ -19,6 +19,8 @@ uv run main.py \
   --method "DER"\
   --der-alpha .1\
   --der-beta 0.5\
+  --M 10\
   --buffer-size 200\
   --replay-size 32\
   --task-shuffle "False"
+

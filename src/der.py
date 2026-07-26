@@ -15,7 +15,7 @@ from tqdm import tqdm
 from src.dataloader import CL_DataLoader
 from src.buffer_selection import make_buffer, add_to_buffer, get_from_buffer
 from src.calibration.socrates_loss import socrates_loss
-from src.calibration.utils import ece
+from src.calibration.utils import ECE
 from src.utils import eval, model_forward
 
 
@@ -38,6 +38,7 @@ def der_loss(
     updated: Array | None = None,
     gamma: float | None = None,
     soc_alpha: float | None = None,
+    M: int = 10,
     *,
     key: PRNGKeyArray,
 ):
@@ -53,6 +54,7 @@ def der_loss(
     )(Model, x, state, keys)
 
     acc = jnp.mean(jnp.argmax(logits, axis=1) == y)
+    ece = jnp.mean(ECE(logits, y, M))
 
     def _der_loss(
         Model,
@@ -166,7 +168,7 @@ def der_loss(
                 ),
             )
             floss += bloss
-        return floss, (logits, acc, state, None, None)  # typing: ignore
+        return floss, (logits, acc, ece, state, None, None)  # typing: ignore
     else:
         loss, up_prob_history = jax.vmap(
             socrates_loss, in_axes=(0, 0, 0, 0, None, None)
@@ -254,7 +256,7 @@ def der_loss(
             )
             loss = loss + beta * sloss
 
-        return loss, (logits, acc, state, updated, prob_history)
+        return loss, (logits, acc, ece, state, updated, prob_history)
 
 
 def train_step(
@@ -280,6 +282,7 @@ def train_step(
     updated: Array | None = None,
     gamma: float | None = None,
     soc_alpha: float | None = None,
+    M: int = 10,
     *,
     key: PRNGKeyArray,
 ):
@@ -288,62 +291,7 @@ def train_step(
         subkey2,
     ) = jax.random.split(key)
 
-    # 2. Define a wrapper function that recombines them so JAX only traces the arrays
-    # def trace_wrapper(
-    #     dyn_model,
-    #     x,
-    #     y,
-    #     state,
-    #     buffer_idx,
-    #     buffer_targets,
-    #     buffer_logits,
-    #     prob_history,
-    #     indexes,
-    #     updated,
-    #     key,
-    # ):
-    #     full_model = eqx.combine(dyn_model, static_model)
-    #     loss_and_grad_fn = eqx.filter_value_and_grad(der_loss, has_aux=True)
-    #     return loss_and_grad_fn(
-    #         full_model,
-    #         x,
-    #         y,
-    #         state,
-    #         trainloader,
-    #         buffer_idx,
-    #         buffer_targets,
-    #         buffer_logits,
-    #         replay_size,
-    #         has_buffer,
-    #         batch_size,
-    #         der_alpha,
-    #         beta,
-    #         prob_history,
-    #         indexes,
-    #         updated,
-    #         gamma,
-    #         soc_alpha,
-    #         key=key,
-    #     )
-
-    # # 3. Print the Jaxpr safely using only the dynamic/array arguments
-    # lowered = jax.make_jaxpr(trace_wrapper)(
-    #     dynamic_model,
-    #     x,
-    #     y,
-    #     state,
-    #     buffer_idx,
-    #     buffer_targets,
-    #     buffer_logits,
-    #     prob_history,
-    #     indexes,
-    #     updated,
-    #     subkey1,
-    # )
-    # jax.debug.print("my thing: {}", lowered)
-
-    # jax.debug.breakpoint()
-    (loss, (logits, acc, state, updated, prob_history)), grads = (
+    (loss, (logits, acc, ece, state, updated, prob_history)), grads = (
         eqx.filter_value_and_grad(der_loss, has_aux=True)(
             model,
             x,
@@ -363,6 +311,7 @@ def train_step(
             updated,
             gamma,
             soc_alpha,
+            M,
             key=subkey1,
         )
     )
@@ -387,6 +336,7 @@ def train_step(
         logits,
         loss,
         acc,
+        ece,
         state,
         updated,
         prob_history,
@@ -415,6 +365,7 @@ def DER_train(
     updated: Array | None = None,
     gamma: float | None = None,
     soc_alpha: float | None = None,
+    M: int = 10,
     print_every: int = 10,
     *,
     key: PRNGKeyArray,
@@ -441,6 +392,7 @@ def DER_train(
 
             epoch_loss = []
             epoch_acc = []
+            epoch_ece = []
 
             model = eqx.nn.inference_mode(model, False)
             pbar = tqdm(
@@ -455,6 +407,7 @@ def DER_train(
                     logits,
                     loss,
                     acc,
+                    ece,
                     state,
                     updated,
                     prob_history,
@@ -486,11 +439,13 @@ def DER_train(
                     updated,
                     gamma,
                     soc_alpha,
+                    M,
                     key=subkey1,
                 )
 
                 epoch_loss.append(loss)
                 epoch_acc.append(acc)
+                epoch_ece.append(ece)
                 if (step + 1) % print_every == 0:
                     pbar.set_postfix(
                         {
@@ -499,15 +454,18 @@ def DER_train(
                             "batch": step + 1,
                             "loss": np.mean(epoch_loss),
                             "acc": np.mean(epoch_acc),
+                            "ece": np.mean(epoch_ece),
                         }
                     )
                     epoch_loss = []
                     epoch_acc = []
+                    epoch_ece = []
 
             print("task eval")
 
             model_forward_jit = eqx.filter_jit(model_forward)
             eval_acc = []
+            eval_ece = []
             eval_loss = []
             model = eqx.nn.inference_mode(model, True)
             for step, (x, y, indexes, task_n) in enumerate(
@@ -522,14 +480,15 @@ def DER_train(
 
                 eval_loss.append(softmax_cross_entropy_with_integer_labels(logits, y))
                 eval_acc.append(jnp.mean(jnp.argmax(logits, axis=1) == y))
+                eval_ece.append(jnp.mean(ECE(logits, y, M)))
                 if (step + 1) == testloader.iters(task):
                     print("eval loss: ", np.mean(eval_loss))
                     print("eval acc: ", np.mean(eval_acc))
-                    print()
+                    print("eval ece: ", np.mean(eval_ece))
 
         print("eval")
         print("-" * 50)
-        res = eval(model, state, tasks, testloader, key=subkey)
+        res = eval(model, state, tasks, testloader, M, key=subkey)
 
         results.append(res)
     return results

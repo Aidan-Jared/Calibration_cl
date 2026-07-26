@@ -8,6 +8,8 @@ from torchvision import transforms
 
 from equinox.nn._stateful import State
 
+from src.calibration.utils import ECE
+
 
 def model_forward(
     model,
@@ -130,7 +132,7 @@ def load_data(data_set: str):
     return train, test
 
 
-def eval(model, state, tasks, testloader, *, key) -> dict[str, dict[str, float]]:
+def eval(model, state, tasks, testloader, M=10, *, key) -> dict[str, dict[str, float]]:
     model = eqx.nn.inference_mode(model, value=True)
 
     def loss_fn(model, x, y, state, key):
@@ -143,8 +145,9 @@ def eval(model, state, tasks, testloader, *, key) -> dict[str, dict[str, float]]
 
         loss = softmax_cross_entropy_with_integer_labels(logits, y)
         acc = jnp.mean(jnp.argmax(logits, axis=1) == y)
+        ece = jnp.mean(ECE(logits, y, M))
 
-        return loss, acc
+        return loss, acc, ece
 
     loss_fn = eqx.filter_jit(loss_fn)
     results = dict()
@@ -152,27 +155,31 @@ def eval(model, state, tasks, testloader, *, key) -> dict[str, dict[str, float]]
         key, subkey = jax.random.split(key)
         task_loss = []
         task_acc = []
+        task_ece = []
         pbar = tqdm(
             enumerate(testloader.sample(p_task, beta=0, key=subkey)),
             total=testloader.iters(p_task),
-            ncols=75,
+            # ncols=75,
         )
         for step, (x, y, _, _) in pbar:
             key, subkey = jax.random.split(key)
-            loss, acc = loss_fn(model, x, y, state, subkey)
+            loss, acc, ece = loss_fn(model, x, y, state, subkey)
             task_loss.append(loss)
             task_acc.append(acc)
+            task_ece.append(ece)
             if step % 10 == 0:
                 pbar.set_postfix(
                     {
                         "task_eval": p_task,
                         "loss": jnp.mean(jnp.array(loss)).item(),
                         "acc": jnp.mean(jnp.array(acc)).item(),
+                        "ece": jnp.mean(jnp.array(ece)).item(),
                     }
                 )
         results[p_task] = {
             "loss": jnp.mean(jnp.array(task_loss)).item(),
             "acc": jnp.mean(jnp.array(task_acc)).item(),
+            "ece": jnp.mean(jnp.array(task_ece)).item(),
         }
 
     return results

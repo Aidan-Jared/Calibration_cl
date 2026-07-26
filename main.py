@@ -81,9 +81,10 @@ parser.add_argument(
 parser.add_argument("--buffer-size", type=int, default=320)
 
 # socrates parameters
-parser.add_argument("--loss", type=str, default="", choices=["", "socrates"])
+parser.add_argument("--loss", type=str, default="DER", choices=["DER", "socrates"])
 parser.add_argument("--soc-alpha", type=float, default=0.0)
 parser.add_argument("--soc-gamma", type=float, default=0.0)
+parser.add_argument("--M", type=int, default=10)
 
 
 args = vars(parser.parse_args())
@@ -203,6 +204,7 @@ def main():
             prob_history=prob_history,
             gamma=gamma,
             soc_alpha=soc_alpha,
+            M=args["M"],
             updated=updated,
             key=subkey4,
         )
@@ -211,7 +213,7 @@ def main():
 
         df = pd.concat([df, pd.DataFrame(results)])
 
-    path = f"Runs/{args['loss']}_{args['data_set']}"
+    path = f"Runs/{args['loss']}_{args['data_set']}.parquet"
     df.to_parquet(path)
 
 

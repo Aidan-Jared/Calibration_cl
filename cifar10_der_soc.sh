@@ -6,9 +6,10 @@ set -e
 uv run main.py \
   --seed 42\
   --model-runs 5\
-  --lr 5e-4\
+  --lr 3e-2\
   --batch-size 32\
   --task-epochs 50\
+  --transform "True"\
   --dropout 0.0\
   --data_set "CIFAR10"\
   --task-splits 5\
@@ -17,9 +18,10 @@ uv run main.py \
   --method "DER"\
   --der-alpha .5\
   --der-beta .75\
-  --buffer-size 1000\
-  --replay-size 64\
-  --task-shuffle "True"
+  --buffer-size 200\
+  --replay-size 32\
+  --task-shuffle "False"\
   --loss "socrates"\
   --soc-alpha 0.5\
-  --soc-gamma 1.0
+  --soc-gamma 1.0\
+  --M 10
